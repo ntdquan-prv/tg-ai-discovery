@@ -1,0 +1,5 @@
+{
+  "search_metadata": {"id": "fixture-maps-0002", "status": "Success", "total_time_taken": 1.2},
+  "search_parameters": {"engine": "google_maps", "type": "search", "q": "gay bar"},
+  "error": "Google Maps hasn't returned any results for this query."
+}

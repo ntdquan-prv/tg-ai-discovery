@@ -1,0 +1,100 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.11",
+  "osm3s": {
+    "timestamp_osm_base": "2026-10-08T08:15:00Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+    {
+      "type": "node",
+      "id": 1001,
+      "lat": 52.4989121,
+      "lon": 13.3534876,
+      "tags": {
+        "amenity": "bar",
+        "name": "Bar Lila",
+        "lgbtq": "primary",
+        "addr:street": "Motzstraße",
+        "addr:housenumber": "24",
+        "addr:postcode": "10777",
+        "addr:city": "Berlin",
+        "addr:country": "DE",
+        "website": "https://www.bar-lila.example/?utm_source=osm",
+        "phone": "+49 30 1234567",
+        "opening_hours": "Mo-Th 20:00-02:00; Fr,Sa 20:00-05:00",
+        "contact:instagram": "https://www.instagram.com/bar_lila/",
+        "contact:facebook": "barlilaberlin"
+      }
+    },
+    {
+      "type": "way",
+      "id": 2002,
+      "center": { "lat": 52.5011, "lon": 13.4208 },
+      "tags": {
+        "amenity": "nightclub",
+        "name": "Club Aurora",
+        "lgbtq": "yes",
+        "addr:street": "Köpenicker Straße",
+        "addr:housenumber": "70",
+        "addr:city": "Berlin",
+        "contact:website": "club-aurora.example",
+        "contact:phone": "+49 30 7654321; +49 30 1111111"
+      }
+    },
+    {
+      "type": "relation",
+      "id": 3003,
+      "center": { "lat": 52.5163, "lon": 13.3777 },
+      "tags": {
+        "type": "multipolygon",
+        "tourism": "hotel",
+        "name": "Hotel Zur Sonne",
+        "lgbtq": "welcome",
+        "website": "https://hotel-zur-sonne.example"
+      }
+    },
+    {
+      "type": "node",
+      "id": 1004,
+      "lat": 52.4802,
+      "lon": 13.4311,
+      "tags": {
+        "leisure": "sauna",
+        "name": "Sauna Nordlicht",
+        "lgbtq": "only",
+        "addr:full": "Hauptstraße 5, Berlin"
+      }
+    },
+    {
+      "type": "node",
+      "id": 1005,
+      "lat": 52.51,
+      "lon": 13.39,
+      "tags": {
+        "amenity": "bar",
+        "lgbtq": "primary"
+      }
+    },
+    {
+      "type": "node",
+      "id": 1006,
+      "lat": 52.4998,
+      "lon": 13.3541,
+      "tags": {
+        "amenity": "bar",
+        "name": "Bar Lila",
+        "lgbtq": "welcome"
+      }
+    },
+    {
+      "type": "relation",
+      "id": 3007,
+      "tags": {
+        "name": "Queer Archiv",
+        "lgbtq": "friendly",
+        "website": "mailto:info@queer-archiv.example"
+      }
+    }
+  ]
+}

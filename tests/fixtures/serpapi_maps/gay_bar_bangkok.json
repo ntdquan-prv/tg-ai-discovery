@@ -1,0 +1,95 @@
+{
+  "search_metadata": {
+    "id": "fixture-maps-0001",
+    "status": "Success",
+    "created_at": "2026-10-08 06:00:00 UTC",
+    "total_time_taken": 2.14
+  },
+  "search_parameters": {
+    "engine": "google_maps",
+    "type": "search",
+    "q": "gay bar",
+    "ll": "@13.750000,100.550000,33396m",
+    "hl": "en",
+    "gl": "th"
+  },
+  "search_information": {
+    "local_results_state": "Results for exact spelling",
+    "query_displayed": "gay bar"
+  },
+  "local_results": [
+    {
+      "position": 1,
+      "title": "Bar Example Silom",
+      "place_id": "ChIJexample0000000001",
+      "data_id": "0x30e29ee00000001:0x1000000000000001",
+      "data_cid": "1000000000000001",
+      "reviews_link": "https://serpapi.com/search.json?engine=google_maps_reviews&data_id=0x30e29ee00000001%3A0x1000000000000001",
+      "photos_link": "https://serpapi.com/search.json?engine=google_maps_photos&data_id=0x30e29ee00000001%3A0x1000000000000001",
+      "gps_coordinates": {"latitude": 13.7284, "longitude": 100.5329},
+      "place_id_search": "https://serpapi.com/search.json?engine=google_maps&place_id=ChIJexample0000000001",
+      "provider_id": "/g/11fixture01",
+      "rating": 4.4,
+      "reviews": 8123,
+      "price": "$$",
+      "type": "Gay bar",
+      "types": ["Gay bar", "Bar"],
+      "type_id": "gay_bar",
+      "type_ids": ["gay_bar", "bar"],
+      "address": "Soi Si Lom 4, Bang Rak, Bangkok 10500",
+      "open_state": "Open ⋅ Closes 2 AM",
+      "hours": "Open ⋅ Closes 2 AM",
+      "operating_hours": {"monday": "8 PM–2 AM", "tuesday": "8 PM–2 AM"},
+      "phone": "+66 2 000 0001",
+      "website": "https://bar-example.example/?utm_source=google&fbclid=1#top",
+      "thumbnail": "https://lh5.googleusercontent.com/p/AF1Qip-example-thumb=w80-h106-k-no",
+      "serpapi_thumbnail": "https://serpapi.com/searches/fixture-maps-0001/images/thumb-example.webp",
+      "service_options": {"dine_in": true, "takeout": false}
+    },
+    {
+      "position": 2,
+      "title": "Club Example",
+      "place_id": "ChIJexample0000000002",
+      "data_id": "0x30e29ee00000002:0x1000000000000002",
+      "gps_coordinates": {"latitude": 13.7291, "longitude": 100.53},
+      "rating": 4.1,
+      "reviews": 912,
+      "type": "Night club",
+      "types": ["Night club"],
+      "address": "Soi Si Lom 2, Bang Rak, Bangkok 10500",
+      "open_state": "Closed ⋅ Opens 9 PM"
+    },
+    {
+      "position": 3,
+      "title": "Sauna Example",
+      "place_id": "ChIJexample0000000003",
+      "data_id": "0x30e29ee00000003:0x1000000000000003",
+      "gps_coordinates": {"latitude": 13.7203, "longitude": 100.5391},
+      "type": "Sauna",
+      "types": ["Sauna"],
+      "address": "Soi Suan Phlu 6, Sathon, Bangkok 10120",
+      "open_state": "Permanently closed",
+      "website": "https://www.facebook.com/saunaexample"
+    },
+    {
+      "position": 4,
+      "title": "Lesbian Bar Example",
+      "place_id": "ChIJexample0000000004",
+      "gps_coordinates": {"latitude": 13.7566, "longitude": 100.5018},
+      "type": "Lesbian bar",
+      "types": ["Lesbian bar", "Bar"],
+      "address": "Sukhumvit Soi 11, Watthana, Bangkok 10110",
+      "open_state": "Temporarily closed",
+      "website": "lesbian-bar.example/en"
+    },
+    {
+      "position": 5,
+      "title": "Mystery Place",
+      "type": "Cafe",
+      "address": "Somewhere in Bangkok"
+    }
+  ],
+  "serpapi_pagination": {
+    "next": "https://serpapi.com/search.json?engine=google_maps&q=gay+bar&start=20"
+  }
+}

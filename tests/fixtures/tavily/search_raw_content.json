@@ -1,0 +1,22 @@
+{
+  "query": "queer events in Lisbon this month",
+  "follow_up_questions": null,
+  "answer": null,
+  "images": [],
+  "results": [
+    {
+      "url": "https://events.example.org/lisbon/queer-events",
+      "title": "Queer events in Lisbon",
+      "content": "A drag brunch runs every Sunday from 12:00. [...] The community centre opens its doors for a film night on the 18th.",
+      "score": 0.93,
+      "raw_content": "# Queer events in Lisbon\n\nA drag brunch runs every Sunday from 12:00 at Example Terrace.\n\n## Film night\n\nThe community centre opens its doors for a film night on the 18th at 20:30. Entry is free.\n\n## Contact\n\nWrite to events@example.org.",
+      "published_date": "Sat, 03 Oct 2026 09:00:00 GMT",
+      "id": "d41c8e-00"
+    }
+  ],
+  "response_time": 3.07,
+  "usage": {
+    "credits": 1
+  },
+  "request_id": "5a1c8d0e-7e3b-4a52-9f6d-0b2c4e8a1f37"
+}

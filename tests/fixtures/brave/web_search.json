@@ -1,0 +1,106 @@
+{
+  "type": "search",
+  "query": {
+    "original": "gay bars Berlin",
+    "show_strict_warning": false,
+    "is_navigational": false,
+    "is_news_breaking": false,
+    "spellcheck_off": false,
+    "country": "de",
+    "bad_results": false,
+    "should_fallback": false,
+    "postal_code": "",
+    "city": "",
+    "header_country": "",
+    "more_results_available": true,
+    "state": ""
+  },
+  "mixed": {
+    "type": "mixed",
+    "main": [
+      {"type": "web", "index": 0, "all": false},
+      {"type": "web", "index": 1, "all": false},
+      {"type": "web", "index": 2, "all": false}
+    ],
+    "top": [],
+    "side": []
+  },
+  "web": {
+    "type": "search",
+    "family_friendly": true,
+    "results": [
+      {
+        "title": "Gay Bars in Berlin: The Complete 2026 Guide",
+        "url": "https://www.berlin-queer-guide.example/bars/?utm_source=newsletter&ref=home#top",
+        "is_source_local": false,
+        "is_source_both": false,
+        "description": "Our guide to the best gay and queer bars in Berlin, from Schöneberg to Neukölln, with opening hours and addresses.",
+        "page_age": "2026-09-20T08:15:00",
+        "profile": {
+          "name": "Berlin Queer Guide",
+          "url": "https://www.berlin-queer-guide.example/bars/",
+          "long_name": "berlin-queer-guide.example",
+          "img": "https://imgs.search.brave.com/example/favicon.png"
+        },
+        "language": "en",
+        "family_friendly": true,
+        "type": "search_result",
+        "subtype": "generic",
+        "is_live": false,
+        "meta_url": {
+          "scheme": "https",
+          "netloc": "www.berlin-queer-guide.example",
+          "hostname": "www.berlin-queer-guide.example",
+          "favicon": "https://imgs.search.brave.com/example/favicon.png",
+          "path": "› bars"
+        },
+        "age": "September 20, 2026",
+        "extra_snippets": [
+          "Opening hours: Mon-Thu 20:00-03:00, Fri-Sun open end. Address: Motzstraße 12, 10777 Berlin.",
+          "Our guide to the best gay and queer bars in Berlin, from Schöneberg to Neukölln, with opening hours and addresses.",
+          "Every Saturday: Rainbow Night with two floors and a cabaret show at 23:00."
+        ]
+      },
+      {
+        "title": "Queer nightlife in Berlin",
+        "url": "https://nightlife-wiki.example/Berlin_queer_nightlife",
+        "description": "An overview of the queer bars, clubs and saunas of Berlin and how the scene developed after 1990.",
+        "language": "en",
+        "family_friendly": true,
+        "type": "search_result",
+        "subtype": "generic",
+        "age": "2 years ago"
+      },
+      {
+        "url": "https://events.berlin-pride.example/calendar",
+        "page_age": "2026-10-01",
+        "age": "1 week ago"
+      },
+      {
+        "title": "Rainbow Corner Bar - Neukölln",
+        "url": "https://rainbow-corner.example/",
+        "description": "Cocktails, DJs and drag shows in the heart of Neukölln.",
+        "page_age": "3 weeks ago",
+        "extra_snippets": []
+      },
+      {
+        "title": "No address on this one",
+        "description": "A result Brave returned without a url must be skipped."
+      },
+      {
+        "title": "Empty url",
+        "url": "",
+        "description": "An empty url is skipped as well."
+      },
+      {
+        "title": "Gay-friendly cafes in Berlin",
+        "url": "https://cafe-list.example/berlin/gay-friendly",
+        "description": "Ten cafes where everyone is welcome.",
+        "page_age": "2026-09-30T20:45:10+02:00",
+        "extra_snippets": [
+          "Ten cafes where everyone is welcome."
+        ]
+      }
+    ]
+  }
+}

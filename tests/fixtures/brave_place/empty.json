@@ -1,0 +1,11 @@
+{
+  "type": "locations",
+  "query": {
+    "original": "gay bar",
+    "altered": null,
+    "spellcheck_off": false,
+    "show_strict_warning": false
+  },
+  "results": [],
+  "location": { "coordinates": [52.52, 13.405], "name": "Berlin", "country": "DE" }
+}

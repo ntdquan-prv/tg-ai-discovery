@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.sample
+.claude/settings.local.json
+
+# Bake-off inputs and outputs: admin-supplied data and provider-derived results never go into git
+results/
+golden/
+canaries/
+
+# Dumps and local databases
+*.sql
+*.dump
+*.sqlite
+*.sqlite3
+
+# OS
+.DS_Store
+Thumbs.db

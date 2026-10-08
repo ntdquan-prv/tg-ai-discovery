@@ -1,0 +1,43 @@
+# Local development stack. `docker compose up -d db` is enough to run the tests from the host.
+name: tg-discovery
+
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: tg_discovery
+      POSTGRES_PASSWORD: tg_discovery # local development only
+      POSTGRES_DB: tg_discovery
+    ports:
+      # 5433 on the host so it does not clash with a Postgres installed locally; override with DB_PORT.
+      - "${DB_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tg_discovery -d tg_discovery"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql://tg_discovery:tg_discovery@db:5432/tg_discovery
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build: .
+    environment:
+      APP_ENV: dev
+      DATABASE_URL: postgresql://tg_discovery:tg_discovery@db:5432/tg_discovery
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:

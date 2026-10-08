@@ -1,0 +1,48 @@
+{
+  "search_metadata": {
+    "id": "fixture-events-0001",
+    "status": "Success",
+    "created_at": "2026-10-08 06:00:00 UTC",
+    "google_url": "https://www.google.com/search?q=LGBTQ%2B+events+in+Bangkok&hl=en&gl=th&ie=UTF-8",
+    "total_time_taken": 1.62
+  },
+  "search_parameters": {
+    "engine": "google",
+    "q": "LGBTQ+ events in Bangkok",
+    "google_domain": "google.com",
+    "hl": "en",
+    "gl": "th",
+    "device": "desktop"
+  },
+  "search_information": {"organic_results_state": "Results for exact spelling"},
+  "events_results": [
+    {
+      "title": "Bangkok Pride Parade 2026",
+      "type": "Pride march",
+      "date": "Nov 29",
+      "time": "3:00 PM",
+      "address": ["Ratchaprasong Intersection", "Bangkok, Thailand"],
+      "thumbnail": "https://serpapi.com/searches/fixture-events-0001/images/thumb-event-4217.jpeg"
+    },
+    {
+      "title": "Silom Drag Marathon",
+      "type": "Drag performance",
+      "date": "Dec 6",
+      "time": "9:00 PM",
+      "address": ["Silom Soi 4", "Bangkok, Thailand"],
+      "thumbnail": "https://serpapi.com/searches/fixture-events-0001/images/thumb-event-4218.jpeg"
+    },
+    {"title": "   ", "date": "Dec 7", "time": "8:00 PM"},
+    {"title": "Chiang Mai Queer Film Week", "date": "Dec 12"},
+    "junk"
+  ],
+  "organic_results": [
+    {
+      "position": 1,
+      "title": "Bangkok Pride - official site",
+      "link": "https://pride.example/organic-result",
+      "snippet": "Everything about the parade."
+    }
+  ],
+  "pagination": {"current": 1, "next": "https://www.google.com/search?q=LGBTQ%2B+events+in+Bangkok&start=10"}
+}

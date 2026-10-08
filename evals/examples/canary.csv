@@ -1,0 +1,9 @@
+id,city,name,url,announced_at
+tec1,Testville,Freshly Announced Party 1,https://promoter.test/testville/events/fresh-1,2026-10-06T18:00:00+00:00
+tec2,Testville,Freshly Announced Party 2,https://promoter.test/testville/events/fresh-2,2026-10-06T18:00:00+00:00
+tec3,Testville,Freshly Announced Party 3,https://promoter.test/testville/events/fresh-3,2026-10-06T18:00:00+00:00
+tec4,Testville,Freshly Announced Party 4,https://promoter.test/testville/events/fresh-4,2026-10-06T18:00:00+00:00
+exc1,Exampleburg,Freshly Announced Party 1,https://promoter.test/exampleburg/events/fresh-1,2026-10-06T18:00:00+00:00
+exc2,Exampleburg,Freshly Announced Party 2,https://promoter.test/exampleburg/events/fresh-2,2026-10-06T18:00:00+00:00
+exc3,Exampleburg,Freshly Announced Party 3,https://promoter.test/exampleburg/events/fresh-3,2026-10-06T18:00:00+00:00
+exc4,Exampleburg,Freshly Announced Party 4,https://promoter.test/exampleburg/events/fresh-4,2026-10-06T18:00:00+00:00

@@ -1,0 +1,133 @@
+{
+  "type": "locations",
+  "query": {
+    "original": "gay bar",
+    "altered": null,
+    "spellcheck_off": false,
+    "show_strict_warning": false
+  },
+  "results": [
+    {
+      "type": "location_result",
+      "id": "loc4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "title": "Bar Lila",
+      "url": "https://www.bar-lila.example/?utm_source=brave",
+      "provider_url": "https://www.yelp.com/biz/bar-lila-berlin",
+      "coordinates": [52.4989121, 13.3534876],
+      "postal_address": {
+        "type": "PostalAddress",
+        "displayAddress": "Motzstraße 24, 10777 Berlin",
+        "streetAddress": "Motzstraße 24",
+        "addressLocality": "Berlin",
+        "addressRegion": "BE",
+        "postalCode": "10777",
+        "country": "DE"
+      },
+      "contact": { "telephone": "+49 30 1234567", "email": "info@bar-lila.example" },
+      "rating": { "ratingValue": 4.4, "bestRating": 5.0, "reviewCount": 7731 },
+      "opening_hours": {
+        "current_day": [{ "abbr_name": "Thu", "full_name": "Thursday", "opens": "20:00", "closes": "02:00" }],
+        "days": [
+          [{ "abbr_name": "Mon", "full_name": "Monday", "opens": "20:00", "closes": "02:00" }],
+          [{ "abbr_name": "Tue", "full_name": "Tuesday", "opens": "20:00", "closes": "02:00" }],
+          [{ "abbr_name": "Wed", "full_name": "Wednesday", "opens": "20:00", "closes": "02:00" }],
+          [{ "abbr_name": "Thu", "full_name": "Thursday", "opens": "20:00", "closes": "02:00" }],
+          [{ "abbr_name": "Fri", "full_name": "Friday", "opens": "20:00", "closes": "02:00" }],
+          [{ "abbr_name": "Sat", "full_name": "Saturday", "opens": "20:00", "closes": "02:00" }],
+          [{ "abbr_name": "Sun", "full_name": "Sunday", "opens": "20:00", "closes": "02:00" }]
+        ]
+      },
+      "distance": { "value": 0.4, "units": "km" },
+      "categories": ["Gay Bar", "Bar"],
+      "price_range": "$$",
+      "thumbnail": {
+        "src": "https://img.example/brave-thumb-4471.jpg",
+        "original": "https://img.example/brave-original-4471.jpg"
+      },
+      "timezone": "Europe/Berlin"
+    },
+    {
+      "type": "location_result",
+      "id": "loc4BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=",
+      "title": "Sauna Nordlicht",
+      "url": "https://www.yelp.com/biz/sauna-nordlicht-berlin",
+      "provider_url": "https://www.yelp.com/biz/sauna-nordlicht-berlin",
+      "coordinates": [52.4802, 13.4311],
+      "postal_address": {
+        "type": "PostalAddress",
+        "displayAddress": "Hauptstraße 5, 10827 Berlin",
+        "addressLocality": "Berlin",
+        "country": "DE"
+      },
+      "opening_hours": {
+        "days": [
+          [],
+          [{ "abbr_name": "Tue", "full_name": "Tuesday", "opens": "14:00", "closes": "23:00" }],
+          [{ "abbr_name": "Wed", "full_name": "Wednesday", "opens": "14:00", "closes": "23:00" }],
+          [{ "abbr_name": "Thu", "full_name": "Thursday", "opens": "14:00", "closes": "23:00" }],
+          [{ "abbr_name": "Fri", "full_name": "Friday", "opens": "14:00", "closes": "23:00" }],
+          [
+            { "abbr_name": "Sat", "full_name": "Saturday", "opens": "12:00", "closes": "16:00" },
+            { "abbr_name": "Sat", "full_name": "Saturday", "opens": "18:00", "closes": "23:00" }
+          ],
+          [{ "abbr_name": "Sun", "full_name": "Sunday", "opens": "12:00", "closes": "22:00" }]
+        ]
+      },
+      "categories": ["Sauna", "Gay & Lesbian"],
+      "timezone": "Europe/Berlin"
+    },
+    {
+      "type": "location_result",
+      "id": "loc4CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=",
+      "title": "Café Regenbogen",
+      "url": "https://cafe-regenbogen.example",
+      "coordinates": [52.5012, 13.3398],
+      "postal_address": {
+        "type": "PostalAddress",
+        "streetAddress": "Fuggerstraße 19",
+        "addressLocality": "Berlin",
+        "country": "Deutschland"
+      },
+      "opening_hours": {
+        "current_day": [{ "abbr_name": "Thu", "full_name": "Thursday", "opens": "09:00", "closes": "18:00" }]
+      },
+      "categories": ["Coffee & Tea", "Cafe"],
+      "serves_cuisine": ["Cafe"]
+    },
+    {
+      "type": "location_result",
+      "id": "loc4DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD=",
+      "url": "https://nameless.example",
+      "coordinates": [52.5, 13.4],
+      "categories": ["Bar"]
+    },
+    {
+      "type": "location_result",
+      "title": "Haus ohne Adresse"
+    },
+    {
+      "type": "location_result",
+      "id": "loc4EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE=",
+      "title": "Club Aurora",
+      "url": "club-aurora.example",
+      "coordinates": [352.5, 13.4],
+      "categories": ["Night Club"]
+    }
+  ],
+  "cities": [{ "type": "city", "name": "Berlin", "country": "DE", "coordinates": [52.52, 13.405] }],
+  "addresses": [
+    {
+      "type": "address",
+      "name": "Motzstraße 24",
+      "coordinates": [52.4989, 13.3535],
+      "pois": [
+        {
+          "type": "location_result",
+          "title": "Listed Under An Address Only",
+          "coordinates": [52.4989, 13.3535]
+        }
+      ]
+    }
+  ],
+  "location": { "coordinates": [52.52, 13.405], "name": "Berlin", "country": "DE" }
+}

@@ -1,0 +1,11 @@
+{
+  "search_metadata": {
+    "id": "fixture-events-0003",
+    "status": "Success",
+    "google_url": "https://www.google.com/search?q=gay+bars+in+Bangkok&hl=en&gl=th&ie=UTF-8"
+  },
+  "search_parameters": {"engine": "google", "q": "gay bars in Bangkok"},
+  "organic_results": [
+    {"position": 1, "title": "Best gay bars in Bangkok", "link": "https://guide.example/bangkok-bars"}
+  ]
+}

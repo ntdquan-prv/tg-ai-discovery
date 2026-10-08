@@ -1,0 +1,70 @@
+{
+  "requestId": "e4f2c3a1b7d94f0e8a6b5c4d3e2f1a09",
+  "resolvedSearchType": "",
+  "searchTime": 1187.4,
+  "results": [
+    {
+      "id": "https://www.berlin-queer-guide.example/bars",
+      "title": "Gay Bars in Berlin: The Complete 2026 Guide",
+      "url": "https://www.berlin-queer-guide.example/bars/?utm_source=newsletter&ref=home#top",
+      "publishedDate": "2026-09-28T00:00:00.000Z",
+      "author": null,
+      "text": "Berlin has one of the largest queer scenes in Europe. Most bars cluster around Motzstraße in Schöneberg and in Neukölln.\n\nRainbow Corner Bar - Motzstraße 12, 10777 Berlin. Open Mon-Thu 20:00-03:00, Fri-Sun until late. Drag show every Saturday at 23:00.",
+      "image": "https://www.berlin-queer-guide.example/img/bars.jpg",
+      "favicon": "https://www.berlin-queer-guide.example/favicon.ico"
+    },
+    {
+      "id": "https://events.berlin-pride.example/calendar",
+      "title": "Pride calendar 2026",
+      "url": "https://events.berlin-pride.example/calendar",
+      "publishedDate": "2026-10-02",
+      "author": "Pride Berlin e.V.",
+      "highlights": [
+        "Rainbow Night, 14 November 2026, 21:00, Rainbow Corner Bar, Motzstraße 12.",
+        "Winter Pride Party, 5 December 2026, 22:00, Club Prisma."
+      ],
+      "highlightScores": [0.62, 0.55]
+    },
+    {
+      "id": "https://nightlife-wiki.example/Berlin_queer_nightlife",
+      "title": "Queer nightlife in Berlin",
+      "url": "https://nightlife-wiki.example/Berlin_queer_nightlife",
+      "summary": "An overview of the queer bars, clubs and saunas of Berlin and how the scene developed after 1990."
+    },
+    {
+      "id": "https://rainbow-corner.example/",
+      "title": "Rainbow Corner Bar - Neukölln",
+      "url": "https://rainbow-corner.example/",
+      "publishedDate": "last Tuesday"
+    },
+    {
+      "id": "no-url",
+      "title": "A result without a url is skipped",
+      "text": "orphan text"
+    },
+    {
+      "id": "https://cafe-list.example/berlin/gay-friendly",
+      "title": "Gay-friendly cafes in Berlin",
+      "url": "https://cafe-list.example/berlin/gay-friendly",
+      "publishedDate": "2026-09-30T20:45:10+02:00",
+      "text": "",
+      "highlights": ["Ten cafes where everyone is welcome."]
+    },
+    {
+      "id": "https://sauna.example/berlin#opening-hours",
+      "title": "  Sauna Berlin  ",
+      "url": "https://sauna.example/berlin#opening-hours",
+      "publishedDate": null,
+      "text": "\n  Open daily 12:00-24:00.  \n"
+    }
+  ],
+  "costDollars": {
+    "total": 0.014,
+    "search": {
+      "neural": 0.007
+    },
+    "contents": {
+      "text": 0.007
+    }
+  }
+}
