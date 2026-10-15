@@ -5,7 +5,8 @@ from datetime import UTC, datetime
 from typing import Annotated, cast
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Body, HTTPException, Query, Request, status
+from fastapi.openapi.models import Example
 
 from tg_discovery.api.auth import Runner, Viewer
 from tg_discovery.api.presenters import candidate_row, run_out
@@ -49,6 +50,32 @@ async def _start(flow: Flow, body: RunRequest, request: Request, session: Sessio
     return _accepted(run, deduplicated=False)
 
 
+_NEW_YORK = {"name": "New York", "timezone": "America/New_York", "lat": 40.7128, "lng": -74.006}
+_EVENT_EXAMPLES: dict[str, Example] = {
+    "one city": {
+        "summary": "Events in one city, the next 60 days",
+        "value": {"country": "US", "country_name": "United States", "cities": [_NEW_YORK], "window_days": 60},
+    }
+}
+_VENUE_EXAMPLES: dict[str, Example] = {
+    "some types": {
+        "summary": "Bars and saunas in one city (three searches per type)",
+        "value": {
+            "country": "US",
+            "country_name": "United States",
+            "cities": [_NEW_YORK],
+            "venue_types": ["Bars", "Saunas"],
+        },
+    },
+    "every type": {
+        "summary": "All ten venue types (no venue_types)",
+        "value": {"country": "US", "country_name": "United States", "cities": [_NEW_YORK]},
+    },
+}
+EventRunBody = Annotated[RunRequest, Body(openapi_examples=_EVENT_EXAMPLES)]
+VenueRunBody = Annotated[RunRequest, Body(openapi_examples=_VENUE_EXAMPLES)]
+
+
 @router.post(
     "/events/runs",
     status_code=status.HTTP_202_ACCEPTED,
@@ -56,10 +83,11 @@ async def _start(flow: Flow, body: RunRequest, request: Request, session: Sessio
     description=(
         "Searches the chosen cities for upcoming LGBTQ+ events, scores what it finds and queues the uncertain ones for "
         "review. Returns at once; follow the run with `GET /runs/{run_id}`. The same request made again while it runs, "
-        "or within a few hours of finishing, returns that run (`deduplicated: true`) and costs nothing."
+        "or within a few hours of finishing, returns that run (`deduplicated: true`) and costs nothing. "
+        "`venue_types` is ignored here."
     ),
 )
-async def start_event_run(body: RunRequest, request: Request, session: SessionDep, admin: Runner) -> RunAccepted:
+async def start_event_run(body: EventRunBody, request: Request, session: SessionDep, admin: Runner) -> RunAccepted:
     return await _start(Flow.EVENT, body, request, session, admin)
 
 
@@ -68,11 +96,14 @@ async def start_event_run(body: RunRequest, request: Request, session: SessionDe
     status_code=status.HTTP_202_ACCEPTED,
     summary="Discovery: look for new venues",
     description=(
-        "Like the events run, for venues: bars, clubs, saunas, cafes... Venues change slowly, so a finished run "
-        "answers the same request for a week."
+        "Searches the chosen cities for venues of the types in `venue_types` (Cafe, Restaurant, Adults, Bars, "
+        "Dance Club, Saunas, Massage, Gyms, Attractions, Tours; all ten when left out), three searches per type, so "
+        "the cost follows the number of types. Venues are not limited to LGBTQ+ places: their LGBTQ+ level is assessed "
+        "and shown in the review packet, but it neither scores nor filters them. Venues change slowly, so a finished "
+        "run answers the same request (same cities and types) for a week. `window_days` is ignored here."
     ),
 )
-async def start_venue_run(body: RunRequest, request: Request, session: SessionDep, admin: Runner) -> RunAccepted:
+async def start_venue_run(body: VenueRunBody, request: Request, session: SessionDep, admin: Runner) -> RunAccepted:
     return await _start(Flow.VENUE, body, request, session, admin)
 
 

@@ -4,8 +4,13 @@ import pytest
 
 from tests.support import NOW, FakeLlm
 from tg_discovery.domain.enums import EventType, Flow, LgbtqLevel, OperatingStatus
-from tg_discovery.pipelines.common.extractor import ExtractionContext, Extractor, quote_in_page
-from tg_discovery.providers.base import SearchHit
+from tg_discovery.pipelines.common.extractor import (
+    MAX_IMAGES_PER_PAGE,
+    ExtractionContext,
+    Extractor,
+    quote_in_page,
+)
+from tg_discovery.providers.base import PageImage, SearchHit
 
 TODAY = date(2026, 10, 8)
 GUIDE = "https://guide.example/gay-bangkok?utm_source=x"
@@ -107,7 +112,8 @@ async def test_the_prompt_delimits_pages_with_a_nonce_and_carries_the_context() 
     assert "Title: Gay Bangkok guide" in prompt
     assert "Published: 2026-09-30" in prompt
     assert "empty.example" not in prompt
-    assert "extract LGBTQ+ venues" in str(call["system"])
+    assert "extract venues" in str(call["system"])
+    assert "never leave a venue out because of it" in str(call["system"])  # venues are not limited to LGBTQ+
     assert call["tool_name"] == "emit_candidates"
     assert "venues" in str(call["parameters"])
 
@@ -183,6 +189,106 @@ async def test_events_get_valid_occurrences_and_the_citys_time_zone() -> None:
     assert (second.start_date, second.end_date, second.timezone) == (date(2026, 11, 21), None, None)
     assert "Time zone of the city: Asia/Bangkok" in str(llm.calls[0]["prompt"])
     assert "extract LGBTQ+ events" in str(llm.calls[0]["system"])
+
+
+def _event(name: str, *urls: str) -> dict[str, object]:
+    return {
+        "name": name,
+        "occurrences": [{"start_date": "2026-11-14"}],
+        "lgbtq": {"level": "primary"},
+        "source_urls": list(urls),
+    }
+
+
+POSTER = "https://cdn.example/posters/drag-night.jpg"
+GALLERY = "https://cdn.example/gallery/1.jpg"
+BANNER = "https://calendar.example/banner.jpg"
+EVENT_PAGE = "https://tickets.example/e/drag-night"
+CALENDAR_PAGE = "https://calendar.example/november"
+
+
+def _picture_hits() -> list[SearchHit]:
+    return [
+        SearchHit(
+            url=EVENT_PAGE,
+            content="Drag Night, 14 November, 21:00.",
+            image=POSTER,
+            images=[PageImage(url=POSTER, alt="poster"), PageImage(url=GALLERY, alt="crowd")],
+        ),
+        SearchHit(
+            url=CALENDAR_PAGE,
+            content="Drag Night on the 14th. Pride Brunch on the 15th.",
+            image=BANNER,
+            images=[PageImage(url="https://calendar.example/brunch.jpg", alt="brunch")],
+        ),
+    ]
+
+
+async def test_an_event_gets_the_pictures_of_the_pages_that_are_about_it_alone() -> None:
+    llm = FakeLlm({"events": [_event("Drag Night", EVENT_PAGE, CALENDAR_PAGE), _event("Pride Brunch", CALENDAR_PAGE)]})
+
+    extraction = await _extractor(llm).extract(_picture_hits(), _ctx(Flow.EVENT))
+
+    drag, brunch = extraction.events
+    assert [(image.url, image.source_url, image.alt) for image in drag.images] == [
+        (POSTER, EVENT_PAGE, None),  # the main picture, first and without an alt text
+        (GALLERY, EVENT_PAGE, "crowd"),
+    ]
+    assert brunch.images == []  # its only page also names another event, so the pictures could be anybody's
+
+
+async def test_a_page_with_one_event_gives_all_its_pictures_and_the_main_one_comes_first() -> None:
+    hits = [
+        SearchHit(
+            url=EVENT_PAGE,
+            content="Drag Night, 14 November.",
+            image=GALLERY,
+            images=[PageImage(url=POSTER), PageImage(url=GALLERY), PageImage(url=f"{GALLERY}?utm_source=x")],
+        )
+    ]
+    llm = FakeLlm({"events": [_event("Drag Night", EVENT_PAGE)]})
+
+    (event,) = (await _extractor(llm).extract(hits, _ctx(Flow.EVENT))).events
+
+    assert [image.url for image in event.images] == [GALLERY, POSTER]  # each address once
+
+
+async def test_the_pictures_are_never_shown_to_the_model() -> None:
+    llm = FakeLlm({"events": []})
+
+    await _extractor(llm).extract(_picture_hits(), _ctx(Flow.EVENT))
+
+    prompt = str(llm.calls[0]["prompt"])
+    assert "cdn.example" not in prompt
+    assert "banner.jpg" not in prompt
+
+
+async def test_the_pictures_of_a_page_the_model_did_not_cite_are_dropped() -> None:
+    llm = FakeLlm({"events": [_event("Drag Night", EVENT_PAGE)]})
+
+    (event,) = (await _extractor(llm).extract(_picture_hits(), _ctx(Flow.EVENT))).events
+
+    assert all(image.source_url == EVENT_PAGE for image in event.images)
+
+
+async def test_venues_get_no_pictures() -> None:
+    hits = [SearchHit(url=GUIDE, content="Heaven Bar is a gay bar.", image=POSTER, images=[PageImage(url=GALLERY)])]
+    llm = FakeLlm(VENUE_ARGUMENTS)
+
+    extraction = await _extractor(llm).extract(hits, _ctx())
+
+    assert extraction.venues
+    assert not hasattr(extraction.venues[0], "images")
+
+
+async def test_the_pictures_of_a_page_are_capped() -> None:
+    images = [PageImage(url=f"https://cdn.example/{number}.jpg") for number in range(40)]
+    hits = [SearchHit(url=EVENT_PAGE, content="Drag Night, 14 November.", images=images)]
+    llm = FakeLlm({"events": [_event("Drag Night", EVENT_PAGE)]})
+
+    (event,) = (await _extractor(llm).extract(hits, _ctx(Flow.EVENT))).events
+
+    assert len(event.images) == MAX_IMAGES_PER_PAGE
 
 
 @pytest.mark.parametrize(

@@ -72,7 +72,7 @@ async def test_a_node_becomes_a_draft_with_everything_the_tags_give(make_http: H
 
     bar = result.venues[0]
     assert bar.name == "Bar Lila"
-    assert bar.venue_type == "Bar"
+    assert bar.venue_type == "Bars"
     assert bar.address == "Motzstraße 24, 10777 Berlin"
     assert (bar.city, bar.country) == ("Berlin", "DE")
     assert (bar.lat, bar.lng) == (52.4989121, 13.3534876)
@@ -107,11 +107,11 @@ async def test_ways_and_relations_are_placed_at_their_centre(make_http: HttpFact
     assert club.phone == "+49 30 7654321"
     assert club.lgbtq is not None
     assert (club.lgbtq.level, club.lgbtq.evidence[0].quote) == (LgbtqLevel.PRIMARY, "lgbtq=yes")
-    assert (hotel.name, hotel.venue_type, hotel.external_ids) == ("Hotel Zur Sonne", "Hotels", {"osm": "relation/3003"})
+    assert (hotel.name, hotel.venue_type, hotel.external_ids) == ("Hotel Zur Sonne", None, {"osm": "relation/3003"})
     assert (hotel.lat, hotel.lng) == (52.5163, 13.3777)
     assert hotel.lgbtq is not None
     assert hotel.lgbtq.level is LgbtqLevel.FRIENDLY
-    assert (sauna.venue_type, sauna.address) == ("Sauna", "Hauptstraße 5, Berlin")
+    assert (sauna.venue_type, sauna.address) == ("Saunas", "Hauptstraße 5, Berlin")
     assert sauna.lgbtq is not None
     assert (sauna.lgbtq.level, sauna.lgbtq.evidence[0].quote) == (LgbtqLevel.PRIMARY, "lgbtq=only")
 
@@ -187,21 +187,23 @@ async def test_the_lgbtq_tag_gives_the_level_and_the_evidence(
 @pytest.mark.parametrize(
     ("tags", "venue_type"),
     [
-        ({"amenity": "bar"}, "Bar"),
-        ({"amenity": "pub"}, "Bar"),
+        ({"amenity": "bar"}, "Bars"),
+        ({"amenity": "pub"}, "Bars"),
         ({"amenity": "nightclub"}, "Dance Club"),
         ({"amenity": "bar;nightclub"}, "Dance Club"),
         ({"amenity": "cafe"}, "Cafe"),
         ({"amenity": "restaurant"}, "Restaurant"),
-        ({"leisure": "sauna"}, "Sauna"),
-        ({"leisure": "fitness_centre"}, "Gym"),
-        ({"shop": "clothes"}, "Shop"),
-        ({"tourism": "hostel"}, "Hotels"),
-        ({"tourism": "guest_house"}, "Hotels"),
-        ({"natural": "beach"}, "Beach"),
-        ({"amenity": "spa"}, "Spa"),
-        ({"shop": "beauty", "beauty": "spa"}, "Spa"),
-        ({"shop": "massage"}, None),
+        ({"leisure": "sauna"}, "Saunas"),
+        ({"leisure": "fitness_centre"}, "Gyms"),
+        ({"amenity": "spa"}, "Massage"),
+        ({"shop": "beauty", "beauty": "spa"}, "Massage"),
+        ({"shop": "massage"}, "Massage"),
+        ({"shop": "erotic"}, "Adults"),
+        ({"amenity": "bar;stripclub"}, "Adults"),
+        ({"tourism": "museum"}, "Attractions"),
+        ({"natural": "beach"}, "Attractions"),
+        ({"tourism": "hostel"}, None),  # places to stay are not a TravelGay venue type
+        ({"shop": "clothes"}, None),
         ({"amenity": "community_centre"}, None),
         ({}, None),
     ],

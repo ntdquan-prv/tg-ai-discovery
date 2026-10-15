@@ -5,8 +5,10 @@ Guidance for Claude Code sessions in this repository. The full design is in
 
 ## What this is
 
-A standalone FastAPI + Postgres service that lets TravelGay admins find new LGBTQ+ **venues** or **events** in a chosen
-area, scores the results, drops junk and queues the uncertain ones as review packets for human approval. Venues and
+A standalone FastAPI + Postgres service that lets TravelGay admins find new **venues** or LGBTQ+ **events** in a chosen
+area, scores the results, drops junk and queues the uncertain ones as review packets for human approval. Since
+2026-10-13 venues are not limited to LGBTQ+ places (the owner's call): a venue run searches the TravelGay venue types
+the admin picks (`VenueType`, three queries each), and the LGBTQ+ level is assessed as a label, not a filter or a score. Venues and
 events are two separate flows (separate pipelines, tables, endpoints and budgets) that share providers, the extractor
 and the review-packet plumbing.
 
@@ -23,7 +25,9 @@ and the review-packet plumbing.
 - Never commit secrets, DB dumps or `results/`. Persist only derived facts, URLs and quotes of at most 300 characters.
   Raw provider payloads are not kept (an optional debug cache with a TTL of 24 hours at most, off by default). Data
   derived from Google keeps only `place_id`/`data_id`: adapters for it must set `google_derived = True` so the runner
-  scrubs ratings, reviews, photos and hours before anything reaches disk.
+  scrubs ratings, reviews, photos and hours before anything reaches disk. The one exception is the owner's
+  `KEEP_GOOGLE_DETAILS` switch (asked for on 2026-10-13, off by default): when the owner turns it on, Google's phone,
+  opening hours, description and price are kept for the POC; never turn it on yourself.
 - Web content is untrusted: the LLM gets no tool that writes data, its output must pass a Pydantic schema, and secrets
   never go into prompts or logs. Every URL fetch goes through the SSRF guard.
 - Prices and terms of third-party APIs change quickly: read the provider's current official reference before writing or
@@ -57,11 +61,11 @@ and respx; tests that need Postgres carry the `integration` marker and skip when
 src/tg_discovery/   config, logging, main (app factory), deps
   api/              routers (health, runs, candidates), schemas (the contract), presenters, auth (service token + roles)
   store/            engine, ORM tables, repository (every query and decision)
-  domain/           pure models, enums, fingerprint, URL and geo helpers (no I/O)
+  domain/           pure models, enums, fingerprint, URL, geo and page-picture helpers (no I/O)
   providers/        base (contracts), metering (budgeted HTTP), registry (who exists, what it needs), search/ maps/
-                    opendata/ (adapters), fetch/ (SSRF-guarded)
+                    opendata/ (adapters), fetch/ (SSRF-guarded: URL probe, and page fetch pinned to the checked IP)
   pipelines/        discovery (request, merge and score a city), runs (execute one run), live (real providers);
-    common/         budget, extractor, query plan, scoring, merge
+    common/         budget, extractor, query plan, scoring, merge, pictures (event picture URLs read from pages)
   llm/              Bedrock Responses client, its factory, extraction schemas, prompts
 evals/              bake-off harness: inputs, registry, runner, matching, metrics, decide, labels, report, CLI (run.py)
   examples/         synthetic inputs for the dry run;  golden/ (git-ignored) holds the owner's real inputs
@@ -92,6 +96,8 @@ regular Google results (no links) and from AI search. The owner asked for the AP
 M2/M3 exists: `POST /events|venues/runs` runs the live providers, the extractor, merge and scoring and stores candidates
 in Postgres; the review table, the review packet and approve/reject (outbox only) are served and described in
 `docs/api.md`. Not built yet: SSE progress, the verify step (fetch the official page), the known set (dedupe against
-TravelGay), edit-before-approve, bulk, soft-lock, watches and the scheduler, the publisher, images and topics. Still
+TravelGay), edit-before-approve, bulk, soft-lock, watches and the scheduler, the publisher, venue images and topics
+(event picture URLs are collected: Exa's main picture plus the pictures read from the event's own page, robots.txt
+honoured). Still
 needed from the owner: golden sets and admin labels for the pilot, and the `.env` fixes (Bedrock URL `/v1`, a real
 contact in `NOMINATIM_USER_AGENT`, `ACCEPTED_TERMS`). Serper and DataForSEO adapters are not written.

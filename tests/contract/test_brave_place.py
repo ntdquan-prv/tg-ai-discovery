@@ -138,7 +138,7 @@ async def test_a_result_with_everything_gives_a_complete_draft(make_http: HttpFa
     result = await _adapter(make_http).find_venues(QUERY)
 
     bar = result.venues[0]
-    assert bar.venue_type == "Bar"
+    assert bar.venue_type == "Bars"
     assert bar.address == "Motzstraße 24, 10777 Berlin"
     assert (bar.city, bar.country) == ("Berlin", "DE")
     assert (bar.lat, bar.lng) == (52.4989121, 13.3534876)
@@ -163,7 +163,7 @@ async def test_a_listing_page_is_a_source_but_not_the_venues_website(make_http: 
     sauna = result.venues[1]
     assert sauna.website is None
     assert [source.url for source in sauna.sources] == ["https://www.yelp.com/biz/sauna-nordlicht-berlin"]
-    assert sauna.venue_type == "Sauna"
+    assert sauna.venue_type == "Saunas"
     assert sauna.address == "Hauptstraße 5, 10827 Berlin"
     assert sauna.phone is None
     assert sauna.opening_hours == (
@@ -201,8 +201,9 @@ async def test_ratings_reviews_photos_contact_emails_and_place_ids_are_not_carri
     result = await _adapter(make_http).find_venues(QUERY)
 
     dumped = result.model_dump_json()
-    for leftover in ("7731", "brave-thumb", "brave-original", "loc4AAAA", "info@bar-lila.example", "price"):
+    for leftover in ("7731", "brave-thumb", "brave-original", "loc4AAAA", "info@bar-lila.example", "$$"):
         assert leftover not in dumped
+    assert all(venue.price_text is None for venue in result.venues)  # its price_range is not read
 
 
 @respx.mock
@@ -287,24 +288,27 @@ async def test_weekly_hours_become_one_short_line(make_http: HttpFactory, hours:
 @pytest.mark.parametrize(
     ("categories", "venue_type"),
     [
-        (["Gay Bar", "Bar"], "Bar"),
-        (["Cocktail Bars"], "Bar"),
-        (["Pub"], "Bar"),
-        (["Beach Bar"], "Bar"),
+        (["Gay Bar", "Bar"], "Bars"),
+        (["Cocktail Bars"], "Bars"),
+        (["Pub"], "Bars"),
+        (["Beach Bar"], "Bars"),
         (["Night Club"], "Dance Club"),
         (["Nightclubs", "Bars"], "Dance Club"),
         (["Coffee & Tea", "Cafe"], "Cafe"),
         (["Coffee Shop"], "Cafe"),
         (["Café"], "Cafe"),
         (["Italian Restaurant"], "Restaurant"),
-        (["Sauna"], "Sauna"),
-        (["Bathhouse"], "Sauna"),
-        (["Gyms", "Fitness & Instruction"], "Gym"),
-        (["Day Spas"], "Spa"),
-        (["Hotel"], "Hotels"),
-        (["Hostels"], "Hotels"),
-        (["Beaches"], "Beach"),
-        (["Book Store"], "Shop"),
+        (["Sauna"], "Saunas"),
+        (["Bathhouse"], "Saunas"),
+        (["Gyms", "Fitness & Instruction"], "Gyms"),
+        (["Day Spas"], "Massage"),
+        (["Massage"], "Massage"),
+        (["Adult Entertainment", "Bars"], "Adults"),
+        (["Museums"], "Attractions"),
+        (["Beaches"], "Attractions"),
+        (["Walking Tours"], "Tours"),
+        (["Hotel"], None),  # not a TravelGay venue type
+        (["Book Store"], None),
         (["Barber Shop"], None),
         (["Barbecue"], None),
         (["Mediterranean", "Greek"], None),

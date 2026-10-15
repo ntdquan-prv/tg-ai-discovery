@@ -5,6 +5,7 @@ from tg_discovery.domain.models import (
     DESCRIPTION_MAX_CHARS,
     QUOTE_MAX_CHARS,
     EventDraft,
+    EventImage,
     EventLinks,
     EventOccurrence,
     EventVenue,
@@ -104,6 +105,7 @@ def test_scrub_google_derived_keeps_facts_and_drops_the_rest() -> None:
         phone="+66 2 123 4567",
         opening_hours="Daily 20:00-02:00",
         description="A club.",
+        price_text="$$",
         socials={"instagram": "https://instagram.com/heaven"},
         external_ids={"google_place_id": "ChIJabc"},
         lgbtq=LgbtqAssessment(level=LgbtqLevel.PRIMARY, evidence=[Evidence(quote="review text", url="https://x.com")]),
@@ -121,15 +123,34 @@ def test_scrub_google_derived_keeps_facts_and_drops_the_rest() -> None:
     assert scrubbed.phone is None
     assert scrubbed.opening_hours is None
     assert scrubbed.description is None
+    assert scrubbed.price_text is None
     assert scrubbed.socials == {}
     assert scrubbed.lgbtq is not None
     assert scrubbed.lgbtq.level is LgbtqLevel.PRIMARY
     assert scrubbed.lgbtq.evidence == []
     assert venue.phone is not None  # the original is untouched
 
+    kept = scrub_google_derived(venue, keep_details=True)  # the owner's KEEP_GOOGLE_DETAILS switch
+
+    assert (kept.phone, kept.opening_hours, kept.description, kept.price_text) == (
+        "+66 2 123 4567",
+        "Daily 20:00-02:00",
+        "A club.",
+        "$$",
+    )
+    assert kept.socials == {}  # socials and quotes are dropped either way
+    assert kept.lgbtq is not None
+    assert kept.lgbtq.evidence == []
+
 
 def test_scrub_google_derived_event() -> None:
-    event = EventDraft(name="Pride Night", description="Fun.", price_text="THB 500", organizer="Someone")
+    event = EventDraft(
+        name="Pride Night",
+        description="Fun.",
+        price_text="THB 500",
+        organizer="Someone",
+        images=[EventImage(url="https://encrypted-tbn0.gstatic.example/p.jpg")],
+    )
 
     scrubbed = scrub_google_derived(event)
 
@@ -139,3 +160,22 @@ def test_scrub_google_derived_event() -> None:
         None,
         None,
     )
+    assert scrubbed.images == []
+    assert len(event.images) == 1  # the original is untouched
+
+    kept = scrub_google_derived(event, keep_details=True)
+
+    assert (kept.description, kept.price_text, kept.organizer, kept.images) == ("Fun.", "THB 500", None, [])
+
+
+def test_an_event_has_no_images_unless_some_were_found() -> None:
+    assert EventDraft(name="Pride Night").images == []
+
+
+def test_an_image_alt_text_is_capped_and_blank_becomes_none() -> None:
+    long = EventImage(url="https://cdn.example/a.jpg", alt="x" * 500)
+    blank = EventImage(url="https://cdn.example/b.jpg", alt="   ")
+
+    assert long.alt is not None
+    assert len(long.alt) == 200
+    assert blank.alt is None

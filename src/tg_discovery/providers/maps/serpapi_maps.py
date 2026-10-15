@@ -4,9 +4,13 @@
 centred on the box with the box's height in metres, and returns up to 20 places in ``local_results``. ``start`` pages
 through them in steps of 20 with about 100 as the practical ceiling; this adapter does not page: one call is one page.
 
-Everything here is Google-derived, so the runner scrubs the drafts. Ratings, review counts, photos, thumbnails and hours
+Everything here is Google-derived, so the runner scrubs the drafts: the phone, opening hours, description and price
+read here are dropped unless the owner turned on ``KEEP_GOOGLE_DETAILS``. Ratings, review counts, photos and thumbnails
 are never read. A place keeps its ``place_id`` and ``data_id``, and its source is the Google Maps address built from the
-``place_id``, which is the only page that is certain to exist. Google gives no LGBTQ+ signal beyond the place category
+``place_id``, which is the only page that is certain to exist. Field names follow serpapi.com/maps-local-results and
+/maps-place-results (read on 2026-10-13): ``operating_hours`` is an object by day in ``local_results``, while a single
+``place_results`` gives ``hours`` as a list of one-day objects (``hours`` in ``local_results`` is only the current
+state, "Open, closes 2 AM"). Google gives no LGBTQ+ signal beyond the place category
 (a "Gay bar" is one), so any other place still goes through the verify step. Terms and price: see ``providers.serpapi``.
 """
 
@@ -17,9 +21,9 @@ from urllib.parse import quote
 from tg_discovery.domain.enums import LgbtqLevel, OperatingStatus
 from tg_discovery.domain.models import LgbtqAssessment, SourceRef, VenueDraft
 from tg_discovery.domain.urls import clean_url, website_key
+from tg_discovery.domain.venue_types import venue_type_from_categories
 from tg_discovery.providers import serpapi
 from tg_discovery.providers.base import VenueQuery, VenueResult
-from tg_discovery.providers.maps.venue_types import venue_type_from_categories
 from tg_discovery.providers.metering import MeteredHttp
 from tg_discovery.providers.serpapi import as_dict, as_list, as_number, as_text, as_texts
 
@@ -95,6 +99,9 @@ def _draft(place: dict[str, object], retrieved_at: datetime) -> VenueDraft | Non
         lng=lng,
         website=_website(place.get("website")),
         phone=as_text(place.get("phone")),
+        opening_hours=_opening_hours(place),
+        description=as_text(place.get("description")),
+        price_text=as_text(place.get("price")),
         lgbtq=LgbtqAssessment(level=LgbtqLevel.PRIMARY) if _LGBTQ.search(" ".join(categories)) else None,
         operating_status=_operating_status(as_text(place.get("open_state"))),
         external_ids=ids,
@@ -112,6 +119,16 @@ def _position(value: object) -> tuple[float, float] | None:
     if lat is None or lng is None or abs(lat) > 90 or abs(lng) > 180:
         return None
     return lat, lng
+
+
+def _opening_hours(place: dict[str, object]) -> str | None:
+    """The week's hours as one line, ``Monday 6 PM-2 AM; Tuesday Closed``, from either shape Google sends."""
+    days = dict(as_dict(place.get("operating_hours")))
+    if not days:
+        for day in as_list(place.get("hours")):
+            days |= as_dict(day)
+    week = [f"{day.capitalize()} {hours}" for day, value in days.items() if (hours := as_text(value))]
+    return "; ".join(week) or None
 
 
 def _website(value: object) -> str | None:

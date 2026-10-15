@@ -43,7 +43,6 @@ def test_the_concerns_say_what_to_look_at_twice() -> None:
 
     assert scored.concerns == [
         "It is not known whether the venue is still open.",
-        "Nothing quoted from a page supports the LGBTQ+ level.",
         "Only one source lists it.",
         "No website to check it against.",
         "No coordinates, so its position was not checked.",
@@ -53,7 +52,6 @@ def test_the_concerns_say_what_to_look_at_twice() -> None:
 @pytest.mark.parametrize(
     ("draft", "reason"),
     [
-        (venue(level=LgbtqLevel.NO), "not_lgbtq"),
         (venue(status=OperatingStatus.PERMANENTLY_CLOSED), "closed"),
         (venue(lat=40.0, lng=-74.0), "outside_area"),
     ],
@@ -64,8 +62,26 @@ def test_a_hard_gate_rejects_a_venue_whatever_else_it_scores(draft: VenueDraft, 
     assert (scored.decision, scored.reason, scored.fast_approve) == ("reject", reason, False)
 
 
+@pytest.mark.parametrize("level", [*LgbtqLevel, None])
+def test_the_lgbtq_level_neither_scores_nor_rejects_a_venue(level: LgbtqLevel | None) -> None:
+    gay_bar = score_venue(venue(status=OperatingStatus.OPEN), TWO_SOURCES, area=AREA)
+
+    scored = score_venue(venue(status=OperatingStatus.OPEN, level=level), TWO_SOURCES, area=AREA)
+
+    assert "lgbtq_relevance" not in scored.parts
+    assert (scored.total, scored.decision, scored.concerns) == (gay_bar.total, "needs_review", gay_bar.concerns)
+
+
 def test_junk_below_the_threshold_is_dropped() -> None:
-    junk = venue(website=None, address=None, lat=None, lng=None, quote=False, level=LgbtqLevel.UNCLEAR, venue_type=None)
+    junk = venue(
+        website=None,
+        address=None,
+        lat=None,
+        lng=None,
+        quote=False,
+        status=OperatingStatus.TEMPORARILY_CLOSED,
+        venue_type=None,
+    )
 
     scored = score_venue(junk, ["exa"], area=AREA)
 

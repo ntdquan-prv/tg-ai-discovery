@@ -38,13 +38,17 @@ class RunOut(BaseModel):
     flow: FlowName
     status: RunStatus
     filter: dict[str, object]
-    stats: dict[str, object] = Field(description="Progress, calls made, candidates found and what was dropped.")
+    stats: dict[str, object] = Field(
+        description="Progress, calls made, candidates found, what was dropped and, under `timing`, how long each "
+        "city took and where (locate, collect, merge, save; the calls of each kind: searches, extraction, pictures)."
+    )
     cost_usd: float
     error: str | None
     requested_by: str | None
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+    duration_s: float | None = Field(default=None, description="Seconds from start to finish; null while it runs.")
 
 
 class Page[T](BaseModel):
@@ -141,8 +145,9 @@ class Description(BaseModel):
 
 class Image(BaseModel):
     url: str
-    kind: str | None = Field(default=None, description="poster, map, crowd, stage, flyer...")
-    source_url: str | None = None
+    kind: str | None = Field(default=None, description="poster, map, crowd, stage, flyer... Not classified yet.")
+    source_url: str | None = Field(default=None, description="The page the picture was found on.")
+    alt: str | None = Field(default=None, description="The text the page gives for the picture.")
 
 
 class EventBlock(BaseModel):
@@ -159,7 +164,11 @@ class EventBlock(BaseModel):
     expected_attendance: int | None = Field(default=None, description="Not collected yet.")
     topics: list[str] = Field(default_factory=list[str], description="Not collected yet.")
     description: Description
-    images: list[Image] = Field(default_factory=list[Image], description="Source URLs only; not collected yet.")
+    images: list[Image] = Field(
+        default_factory=list[Image],
+        description="Picture URLs found on the pages that are about this event alone (up to 20). The pictures are not "
+        "downloaded or stored here; check the right to use one before copying it.",
+    )
 
 
 class VenueBlock(BaseModel):
@@ -174,6 +183,7 @@ class VenueBlock(BaseModel):
     phone: str | None
     socials: dict[str, str]
     opening_hours: str | None
+    price_text: str | None = Field(default=None, description="As the source writes it, such as `$$` or `$10-20`.")
     operating_status: str
     description: Description
     images: list[Image] = Field(default_factory=list[Image], description="Source URLs only; not collected yet.")

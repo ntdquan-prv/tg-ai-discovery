@@ -7,6 +7,7 @@ drafts of one city by identity, merge each group, score it, drop the junk. ``exe
 import hashlib
 import json
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Protocol
@@ -14,7 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from tg_discovery.domain.enums import Flow
+from tg_discovery.domain.enums import Flow, VenueType
 from tg_discovery.domain.fingerprint import event_fingerprint, venue_fingerprint
 from tg_discovery.domain.geo import BoundingBox
 from tg_discovery.domain.models import EventDraft, VenueDraft
@@ -83,6 +84,18 @@ class RunFilter(BaseModel):
     window_days: int = Field(
         default=DEFAULT_WINDOW_DAYS, ge=1, le=365, description="Events only: how far ahead to look."
     )
+    venue_types: list[VenueType] | None = Field(
+        default=None,
+        description=(
+            "Venues only: the types to search for, three searches each; left out or empty means all ten. A venue of "
+            "another type that comes back is kept, and venues are not limited to LGBTQ+ places."
+        ),
+    )
+
+    def chosen_venue_types(self) -> list[VenueType]:
+        """The venue types to search for, in a fixed order; every type when none was chosen."""
+        wanted = set(self.venue_types or VenueType)
+        return [venue_type for venue_type in VenueType if venue_type in wanted]
 
     def digest(self, flow: Flow) -> str:
         """Identifies the request, so that the same one is not run twice at once (single flight)."""
@@ -92,6 +105,8 @@ class RunFilter(BaseModel):
             "cities": sorted(city.name.casefold() for city in self.cities),
             "window_days": self.window_days if flow is Flow.EVENT else None,
         }
+        if flow is Flow.VENUE:  # added only for venues, so earlier requests keep their identity
+            key["venue_types"] = [venue_type.value for venue_type in self.chosen_venue_types()]
         return hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()
 
 
@@ -113,12 +128,39 @@ class CityTarget:
 
 
 @dataclass(slots=True)
+class Timing:
+    """The calls of one kind in a city: how many, how long they took together and the slowest one."""
+
+    calls: int = 0
+    total_s: float = 0.0  # the calls overlap, so this can be more than the time the city took
+    slowest_s: float = 0.0
+
+    def add(self, seconds: float) -> None:
+        self.calls += 1
+        self.total_s += seconds
+        self.slowest_s = max(self.slowest_s, seconds)
+
+
+@dataclass(slots=True)
 class CollectStats:
     calls: int = 0
     failed_calls: int = 0
     stopped_by_budget: bool = False
     errors: Counter[str] = field(default_factory=Counter[str])
     drafts_by_provider: Counter[str] = field(default_factory=Counter[str])
+    timings: dict[str, Timing] = field(default_factory=dict[str, Timing])
+
+    def note(self, kind: str, seconds: float) -> None:
+        """Record one call of ``kind`` (``search:exa``, ``extract``, ``pictures``...) and how long it took."""
+        self.timings.setdefault(kind, Timing()).add(seconds)
+
+    def busy(self) -> dict[str, dict[str, float]]:
+        """Calls, total and slowest seconds per kind, the kind that took longest first."""
+        ranked = sorted(self.timings.items(), key=lambda item: -item[1].total_s)
+        return {
+            kind: {"calls": timing.calls, "total_s": round(timing.total_s, 1), "slowest_s": round(timing.slowest_s, 1)}
+            for kind, timing in ranked
+        }
 
 
 @dataclass(slots=True)
@@ -134,7 +176,17 @@ class CityBatch:
 class Collector(Protocol):
     """Asks the providers about one city. The live one calls vendors; tests answer from a script."""
 
-    async def collect(self, flow: Flow, city: CityTarget, *, window_days: int, today: date) -> CityBatch: ...
+    async def collect(
+        self,
+        flow: Flow,
+        city: CityTarget,
+        *,
+        window_days: int,
+        today: date,
+        venue_types: Sequence[VenueType] = (),
+    ) -> CityBatch:
+        """``venue_types`` are the types a venue run searches for; empty means all of them."""
+        ...
 
 
 class Geocoder(Protocol):

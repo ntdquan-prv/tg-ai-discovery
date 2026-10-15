@@ -16,8 +16,8 @@ import httpx
 
 from tg_discovery.domain.models import SourceRef, VenueDraft
 from tg_discovery.domain.urls import clean_url, website_key
+from tg_discovery.domain.venue_types import venue_type_from_categories
 from tg_discovery.providers.base import PriceSpec, ProviderCall, ProviderError, VenueQuery, VenueResult
-from tg_discovery.providers.maps.venue_types import venue_type_from_categories
 from tg_discovery.providers.metering import MeteredHttp
 
 SEARCH_URL = "https://api.search.brave.com/res/v1/local/place_search"

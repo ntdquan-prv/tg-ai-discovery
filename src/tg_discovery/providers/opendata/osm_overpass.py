@@ -1,5 +1,9 @@
 """OpenStreetMap venues from the public Overpass API: every object in an area that is tagged ``lgbtq=*``.
 
+Venue runs are not limited to LGBTQ+ places (the owner's call on 2026-10-13), but this source stays on the ``lgbtq``
+tag: without it a city's query would return every bar, cafe and restaurant mapped there (tens of thousands in a large
+city) in no useful order, while Google Maps and Exa already answer the general queries with the best-known places.
+
 The query ignores ``VenueQuery.text`` (the harness calls it once per city), covers nodes, ways and relations, has no
 result cap and nothing is deduplicated. Usage policy of the main instance, read on 2026-10-08 (OSM wiki, "Overpass
 API"): under 10,000 queries and 1 GB a day is fair use, regular jobs should divide that by 100, requests must carry a
@@ -13,7 +17,7 @@ from typing import cast
 
 import httpx
 
-from tg_discovery.domain.enums import LgbtqLevel
+from tg_discovery.domain.enums import LgbtqLevel, VenueType
 from tg_discovery.domain.geo import BoundingBox
 from tg_discovery.domain.models import Evidence, LgbtqAssessment, SourceRef, VenueDraft
 from tg_discovery.domain.urls import clean_url
@@ -53,23 +57,26 @@ _LEVELS = {
 }
 
 # (tag key, tag values, TravelGay venue type). The first row that matches wins, so the more specific types come first.
-_VENUE_TYPES: tuple[tuple[str, frozenset[str], str], ...] = (
-    ("tourism", frozenset({"hotel", "hostel", "guest_house", "motel"}), "Hotels"),
-    ("leisure", frozenset({"sauna"}), "Sauna"),
-    ("leisure", frozenset({"fitness_centre"}), "Gym"),
-    ("amenity", frozenset({"spa"}), "Spa"),
-    ("leisure", frozenset({"spa"}), "Spa"),
-    ("tourism", frozenset({"spa_resort"}), "Spa"),
-    ("beauty", frozenset({"spa"}), "Spa"),
-    ("amenity", frozenset({"nightclub"}), "Dance Club"),
-    ("amenity", frozenset({"bar", "pub"}), "Bar"),
-    ("amenity", frozenset({"cafe"}), "Cafe"),
-    ("amenity", frozenset({"restaurant"}), "Restaurant"),
-    ("natural", frozenset({"beach"}), "Beach"),
-    ("leisure", frozenset({"beach_resort"}), "Beach"),
+# Places of other kinds (hotels, shops) get no type.
+_VENUE_TYPES: tuple[tuple[str, frozenset[str], VenueType], ...] = (
+    ("amenity", frozenset({"stripclub", "swingerclub"}), VenueType.ADULTS),
+    ("shop", frozenset({"erotic"}), VenueType.ADULTS),
+    ("leisure", frozenset({"sauna"}), VenueType.SAUNAS),
+    ("amenity", frozenset({"sauna"}), VenueType.SAUNAS),
+    ("amenity", frozenset({"nightclub"}), VenueType.DANCE_CLUB),
+    ("shop", frozenset({"massage"}), VenueType.MASSAGE),
+    ("amenity", frozenset({"spa"}), VenueType.MASSAGE),
+    ("leisure", frozenset({"spa"}), VenueType.MASSAGE),
+    ("tourism", frozenset({"spa_resort"}), VenueType.MASSAGE),
+    ("beauty", frozenset({"spa"}), VenueType.MASSAGE),
+    ("leisure", frozenset({"fitness_centre"}), VenueType.GYMS),
+    ("amenity", frozenset({"bar", "pub"}), VenueType.BARS),
+    ("amenity", frozenset({"cafe"}), VenueType.CAFE),
+    ("amenity", frozenset({"restaurant"}), VenueType.RESTAURANT),
+    ("tourism", frozenset({"attraction", "museum", "gallery", "viewpoint", "zoo", "aquarium"}), VenueType.ATTRACTIONS),
+    ("natural", frozenset({"beach"}), VenueType.ATTRACTIONS),
+    ("leisure", frozenset({"beach_resort", "park"}), VenueType.ATTRACTIONS),
 )
-# shop=* is any kind of shop, except services that are not retail.
-_SERVICE_SHOPS = frozenset({"massage", "beauty", "hairdresser", "tattoo"})
 _SOCIAL_NETWORKS = ("facebook", "instagram", "twitter", "youtube", "tiktok")
 
 
@@ -205,11 +212,11 @@ def _position(element: dict[str, object]) -> tuple[float, float] | None:
     return lat, lng
 
 
-def _venue_type(tags: dict[str, str]) -> str | None:
+def _venue_type(tags: dict[str, str]) -> VenueType | None:
     for key, values, venue_type in _VENUE_TYPES:
         if _values(tags, key) & values:
             return venue_type
-    return "Shop" if _values(tags, "shop") - _SERVICE_SHOPS else None
+    return None
 
 
 def _values(tags: dict[str, str], key: str) -> frozenset[str]:

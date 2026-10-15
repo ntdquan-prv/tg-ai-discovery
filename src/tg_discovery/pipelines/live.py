@@ -5,22 +5,25 @@ is counted and skipped; it never loses what the others found.
 """
 
 import asyncio
-from collections.abc import AsyncGenerator, Awaitable, Callable
+import time
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
+from typing import overload
 
 import httpx
 import structlog
 
 from tg_discovery.config import Settings
-from tg_discovery.domain.enums import Flow
+from tg_discovery.domain.enums import Flow, VenueType
 from tg_discovery.domain.geo import BoundingBox
-from tg_discovery.domain.models import scrub_google_derived
+from tg_discovery.domain.models import EventDraft, VenueDraft, scrub_google_derived
 from tg_discovery.llm.bedrock_responses import LlmError
 from tg_discovery.llm.factory import bedrock_from_settings
 from tg_discovery.pipelines.common.budget import Budget
 from tg_discovery.pipelines.common.extractor import DraftExtractor, ExtractionContext, Extractor
-from tg_discovery.pipelines.common.queries import PlannedQuery, build_query_plan
+from tg_discovery.pipelines.common.pictures import PictureFinder
+from tg_discovery.pipelines.common.queries import PlannedQuery, build_query_plan, build_venue_plan
 from tg_discovery.pipelines.discovery import AreaError, CityBatch, CityRequest, CityTarget, RunEnvironment
 from tg_discovery.providers.base import (
     BudgetExceededError,
@@ -31,6 +34,7 @@ from tg_discovery.providers.base import (
     VenueProvider,
     VenueQuery,
 )
+from tg_discovery.providers.fetch.page_fetch import HttpxPageFetcher
 from tg_discovery.providers.metering import MeteredHttp
 from tg_discovery.providers.opendata.nominatim import Nominatim
 from tg_discovery.providers.registry import build_providers
@@ -54,24 +58,39 @@ class LiveCollector:
         venue_providers: list[VenueProvider],
         extractor: DraftExtractor | None,
         clock: Callable[[], datetime],
+        pictures: PictureFinder | None = None,
+        keep_google_details: bool = False,
     ) -> None:
         self._search = search_providers
         self._venue = venue_providers
         self._extractor = extractor
         self._clock = clock
+        self._pictures = pictures
+        self._keep_google_details = keep_google_details
 
-    async def collect(self, flow: Flow, city: CityTarget, *, window_days: int, today: date) -> CityBatch:
+    async def collect(
+        self,
+        flow: Flow,
+        city: CityTarget,
+        *,
+        window_days: int,
+        today: date,
+        venue_types: Sequence[VenueType] = (),
+    ) -> CityBatch:
         batch = CityBatch(city)
         slots = asyncio.Semaphore(CONCURRENCY)
         stop = asyncio.Event()
-        queries = build_query_plan(
-            flow,
-            city=city.name,
-            country_name=city.country_name,
-            today=today,
-            local=(),
-            event_freshness_days=window_days,
-        )
+        if flow is Flow.VENUE:
+            queries = build_venue_plan(city=city.name, country_name=city.country_name, venue_types=venue_types)
+        else:
+            queries = build_query_plan(
+                flow,
+                city=city.name,
+                country_name=city.country_name,
+                today=today,
+                local=(),
+                event_freshness_days=window_days,
+            )
         jobs: list[Awaitable[None]] = []
         if flow is Flow.VENUE:
             jobs += [
@@ -120,14 +139,17 @@ class LiveCollector:
                 max_results=MAX_RESULTS,
                 freshness_days=query.freshness_days,
             )
+            kind, started = f"search:{provider.name}", time.perf_counter()
             try:
                 result = await provider.search(request)
             except BudgetExceededError:
                 stop.set()
                 return
             except Exception as error:  # one provider's failure must not lose what the others found
+                batch.stats.note(kind, time.perf_counter() - started)
                 self._failed(batch, provider.name, error)
                 return
+            batch.stats.note(kind, time.perf_counter() - started)
             batch.stats.calls += 1
             await self._read(provider, batch, query, result.hits, today, stop)
 
@@ -152,23 +174,44 @@ class LiveCollector:
             today=today,
             retrieved_at=self._clock(),
         )
+        started = time.perf_counter()
         try:
             extraction = await self._extractor.extract(hits, context)
         except BudgetExceededError:
             stop.set()
             return
         except (LlmError, ProviderError) as error:
+            batch.stats.note("extract", time.perf_counter() - started)
             self._failed(batch, f"{provider.name} extraction", error)
             return
         except Exception as error:
+            batch.stats.note("extract", time.perf_counter() - started)
             self._failed(batch, f"{provider.name} extraction", error)
             return
+        batch.stats.note("extract", time.perf_counter() - started)
+        events = extraction.events
+        if self._pictures is not None and events and not provider.google_derived:
+            started = time.perf_counter()
+            events = await self._pictures.attach(events)
+            batch.stats.note("pictures", time.perf_counter() - started)
         for venue in extraction.venues:
-            batch.venues.append((provider.name, scrub_google_derived(venue) if provider.google_derived else venue))
+            batch.venues.append((provider.name, self._stored(provider, venue)))
             batch.stats.drafts_by_provider[provider.name] += 1
-        for event in extraction.events:
-            batch.events.append((provider.name, scrub_google_derived(event) if provider.google_derived else event))
+        for event in events:
+            batch.events.append((provider.name, self._stored(provider, event)))
             batch.stats.drafts_by_provider[provider.name] += 1
+
+    @overload
+    def _stored(self, provider: SearchProvider | VenueProvider, draft: VenueDraft) -> VenueDraft: ...
+    @overload
+    def _stored(self, provider: SearchProvider | VenueProvider, draft: EventDraft) -> EventDraft: ...
+    def _stored(
+        self, provider: SearchProvider | VenueProvider, draft: VenueDraft | EventDraft
+    ) -> VenueDraft | EventDraft:
+        """The draft as it may be kept: Google-derived ones are scrubbed (see ``Settings.keep_google_details``)."""
+        if not provider.google_derived:
+            return draft
+        return scrub_google_derived(draft, keep_details=self._keep_google_details)
 
     async def _area(
         self,
@@ -189,17 +232,20 @@ class LiveCollector:
                 language="en" if query.language == "*" else query.language,
                 max_results=VENUE_RESULTS,
             )
+            kind, started = f"places:{provider.name}", time.perf_counter()
             try:
                 result = await provider.find_venues(request)
             except BudgetExceededError:
                 stop.set()
                 return
             except Exception as error:
+                batch.stats.note(kind, time.perf_counter() - started)
                 self._failed(batch, provider.name, error)
                 return
+            batch.stats.note(kind, time.perf_counter() - started)
             batch.stats.calls += 1
             for venue in result.venues:
-                batch.venues.append((provider.name, scrub_google_derived(venue) if provider.google_derived else venue))
+                batch.venues.append((provider.name, self._stored(provider, venue)))
                 batch.stats.drafts_by_provider[provider.name] += 1
 
 
@@ -247,12 +293,15 @@ async def live_environment(settings: Settings) -> AsyncGenerator[RunEnvironment]
                 min_interval_s=Nominatim.min_interval_s,
             )
             nominatim = Nominatim(http, settings.nominatim_user_agent)
+        pictures = PictureFinder(HttpxPageFetcher(client)) if settings.fetch_event_pictures else None
         yield RunEnvironment(
             collector=LiveCollector(
                 search_providers=built.search,
                 venue_providers=built.venue,
                 extractor=extractor,
                 clock=lambda: datetime.now(UTC),
+                pictures=pictures,
+                keep_google_details=settings.keep_google_details,
             ),
             geocoder=LiveGeocoder(nominatim, settings.city_radius_km),
             budget=budget,

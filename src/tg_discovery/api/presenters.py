@@ -14,6 +14,7 @@ from tg_discovery.api.schemas import (
     EventBlock,
     FlowName,
     History,
+    Image,
     Links,
     Occurrence,
     Place,
@@ -145,6 +146,9 @@ def run_out(run: DiscoveryRun) -> RunOut:
         created_at=run.created_at,
         started_at=run.started_at,
         finished_at=run.finished_at,
+        duration_s=(
+            round((run.finished_at - run.started_at).total_seconds(), 1) if run.started_at and run.finished_at else None
+        ),
     )
 
 
@@ -194,6 +198,7 @@ def _event_block(draft: EventDraft) -> EventBlock:
             instagram=draft.links.instagram,
         ),
         description=Description(text=draft.description),
+        images=[Image(url=item.url, source_url=item.source_url, alt=item.alt) for item in draft.images],
     )
 
 
@@ -210,6 +215,7 @@ def _venue_block(draft: VenueDraft) -> VenueBlock:
         phone=draft.phone,
         socials=draft.socials,
         opening_hours=draft.opening_hours,
+        price_text=draft.price_text,
         operating_status=draft.operating_status.value,
         description=Description(text=draft.description),
     )

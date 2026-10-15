@@ -58,7 +58,13 @@ class _TextModel(BaseModel):
 
 class ExtractedVenue(_TextModel):
     name: str
-    venue_type: str | None = Field(default=None, description="For example bar, dance club, sauna, cafe, restaurant.")
+    venue_type: str | None = Field(
+        default=None,
+        description=(
+            "One of Cafe, Restaurant, Adults, Bars, Dance Club, Saunas, Massage, Gyms, Attractions, Tours; "
+            "null when the pages do not make it clear."
+        ),
+    )
     address: str | None = None
     city: str | None = Field(default=None, description="The city the page places this venue in.")
     lat: float | None = Field(default=None, description="Only if the page states coordinates.")

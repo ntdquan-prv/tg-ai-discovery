@@ -1,6 +1,6 @@
 """The whole API over a real Postgres, with the providers replaced by a script: start a run, review, decide."""
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -10,10 +10,11 @@ import httpx
 import pytest
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from structlog.testing import capture_logs
 
 from tests.pipeline_builders import event, venue
 from tg_discovery.config import load_settings
-from tg_discovery.domain.enums import Flow
+from tg_discovery.domain.enums import Flow, VenueType
 from tg_discovery.domain.geo import BoundingBox
 from tg_discovery.main import create_app
 from tg_discovery.pipelines.common.budget import Budget
@@ -38,8 +39,18 @@ class ScriptedCollector:
         self.venues = venues or []
         self.events = events or []
         self.fail = fail
+        self.venue_types: list[VenueType] = []  # what the last venue run asked for
 
-    async def collect(self, flow: Flow, city: CityTarget, *, window_days: int, today: date) -> CityBatch:
+    async def collect(
+        self,
+        flow: Flow,
+        city: CityTarget,
+        *,
+        window_days: int,
+        today: date,
+        venue_types: Sequence[VenueType] = (),
+    ) -> CityBatch:
+        self.venue_types = list(venue_types)
         if self.fail:
             msg = "the providers are down"
             raise RuntimeError(msg)
@@ -56,7 +67,16 @@ class ScriptedGeocoder:
 def two_events_and_a_past_one() -> ScriptedCollector:
     return ScriptedCollector(
         events=[
-            ("exa", event("Drag Brunch", start=SOON, price="Free", organizer="Brunch Co")),
+            (
+                "exa",
+                event(
+                    "Drag Brunch",
+                    start=SOON,
+                    price="Free",
+                    organizer="Brunch Co",
+                    images=["https://cdn.test/posters/brunch.jpg", "https://cdn.test/gallery/1.jpg"],
+                ),
+            ),
             ("serpapi_events", event("Drag Brunch", start=SOON, official=None, provider="serpapi_events")),
             ("exa", event("Pride Picnic", start=SOON + timedelta(days=3), venue_name="The Park", address=None)),
             ("exa", event("Last Week's Party", start=date.today() - timedelta(days=7))),
@@ -117,6 +137,30 @@ async def test_a_run_finds_scores_and_stores_candidates_for_review(
         assert queue["total"] == 2
 
 
+async def test_a_run_reports_how_long_it_took_and_logs_it(database_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    async with api(database_url, monkeypatch, two_events_and_a_past_one()) as client:
+        with capture_logs() as logs:  # after the app is built: building it configures the logging again
+            accepted = await start(client)
+        run = (await client.get(f"/runs/{accepted['run_id']}")).json()
+
+    assert isinstance(run["duration_s"], float)
+    assert run["duration_s"] >= 0
+    timing = run["stats"]["timing"]
+    assert timing["total_s"] >= 0
+    (city,) = timing["cities"]
+    assert city["city"] == "Testville"
+    assert {"seconds", "locate_s", "collect_s", "merge_s", "save_s", "busy"} <= set(city)
+    events = {entry["event"]: entry for entry in logs if entry["event"] in {"run started", "city done", "run finished"}}
+    assert list(events) == ["run started", "city done", "run finished"]
+    assert events["run started"]["cities"] == ["Testville"]
+    assert events["city done"]["city"] == "Testville"
+    assert events["city done"]["candidates"] == 2
+    assert events["city done"]["rejected"] == 1
+    assert events["run finished"]["status"] == "succeeded"
+    assert events["run finished"]["seconds"] >= 0
+    assert events["run finished"]["run"] == accepted["code"]
+
+
 async def test_the_review_packet_has_the_reasons_the_doubts_and_the_place_in_the_run(
     database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -133,6 +177,15 @@ async def test_the_review_packet_has_the_reasons_the_doubts_and_the_place_in_the
         assert packet["event"]["venue"]["name"] == "Rainbow Bar"
         assert packet["event"]["tickets"] == {"kind": "free", "price_text": "Free", "note": None, "url": None}
         assert packet["event"]["occurrences"][0]["start_time"] == "21:00"
+        assert packet["event"]["images"] == [
+            {
+                "url": "https://cdn.test/posters/brunch.jpg",
+                "kind": None,
+                "source_url": "https://src.test/page",
+                "alt": None,
+            },
+            {"url": "https://cdn.test/gallery/1.jpg", "kind": None, "source_url": "https://src.test/page", "alt": None},
+        ]
         assert packet["lgbtq_level"] == "primary"
         assert packet["why_relevant"][0]["quote"] == "A bar for the community"
         assert packet["scores"]["total"] > 0.5
@@ -150,6 +203,7 @@ async def test_the_review_packet_has_the_reasons_the_doubts_and_the_place_in_the
         second = (await client.get(f"/events/candidates/{rows[1]['id']}", params={"run_id": accepted["run_id"]})).json()
         assert second["position"] == {"index": 2, "total": 2, "prev_id": rows[0]["id"], "next_id": None}
         assert "Only one source lists it." in second["ai_review"]["cons"]
+        assert second["event"]["images"] == []
 
 
 async def test_approving_queues_the_candidate_and_a_second_decision_is_refused(
@@ -245,6 +299,48 @@ async def test_finding_a_candidate_again_keeps_the_decision_and_counts_the_sight
         assert (await client.get(f"/runs/{second['run_id']}/results", params={"outcome": "new"})).json()["total"] == 0
 
 
+async def test_a_later_run_adds_pictures_to_a_candidate_quietly(
+    database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    collector = ScriptedCollector(events=[("exa", event("Drag Brunch", start=SOON))])
+    async with api(database_url, monkeypatch, collector) as client:
+        first = await start(client)
+        row = (await client.get(f"/runs/{first['run_id']}/results")).json()["items"][0]
+        assert (await client.get(f"/events/candidates/{row['id']}")).json()["event"]["images"] == []
+
+        collector.events = [("exa", event("Drag Brunch", start=SOON, images=["https://cdn.test/a.jpg"]))]
+        second = await start(client, force=True)
+        collector.events = [
+            ("exa", event("Drag Brunch", start=SOON, images=["https://cdn.test/a.jpg", "https://cdn.test/b.jpg"]))
+        ]
+        third = await start(client, force=True)
+
+        packet = (await client.get(f"/events/candidates/{row['id']}")).json()
+        assert [image["url"] for image in packet["event"]["images"]] == [
+            "https://cdn.test/a.jpg",
+            "https://cdn.test/b.jpg",
+        ]
+        assert packet["version"] == 1  # a picture is not a material change: nobody has to look at it again
+        for run_id in (second["run_id"], third["run_id"]):
+            unchanged = (await client.get(f"/runs/{run_id}/results", params={"outcome": "unchanged"})).json()
+            assert unchanged["total"] == 1
+
+
+async def test_pictures_are_not_added_to_a_candidate_that_was_already_decided(
+    database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    collector = ScriptedCollector(events=[("exa", event("Drag Brunch", start=SOON))])
+    async with api(database_url, monkeypatch, collector) as client:
+        first = await start(client)
+        row = (await client.get(f"/runs/{first['run_id']}/results")).json()["items"][0]
+        await client.post(f"/events/candidates/{row['id']}/approve", json={"version": 1})
+
+        collector.events = [("exa", event("Drag Brunch", start=SOON, images=["https://cdn.test/a.jpg"]))]
+        await start(client, force=True)
+
+        assert (await client.get(f"/events/candidates/{row['id']}")).json()["event"]["images"] == []
+
+
 async def test_the_venue_flow_merges_scores_and_lists_venues(
     database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -275,6 +371,69 @@ async def test_the_venue_flow_merges_scores_and_lists_venues(
         assert packet["fast_approve"] is True
         approved = await client.post(f"/venues/candidates/{packet['id']}/approve", json={"version": packet["version"]})
         assert approved.json()["status"] == "approved"
+
+
+async def test_a_venue_run_searches_the_chosen_types_or_all_of_them(
+    database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    collector = ScriptedCollector(venues=[("exa", venue("Heaven"))])
+    async with api(database_url, monkeypatch, collector) as client:
+        everything = await start(client, "venues")
+        assert collector.venue_types == list(VenueType)
+
+        chosen = await start(client, "venues", venue_types=["Saunas", "Bars"])
+        assert collector.venue_types == [VenueType.BARS, VenueType.SAUNAS]
+        # Other types are another request, not the one that ran a moment ago; the same types in any order are not.
+        assert chosen["deduplicated"] is False
+        again = await start(client, "venues", venue_types=["Bars", "Saunas", "Bars"])
+        assert (again["deduplicated"], again["run_id"]) == (True, chosen["run_id"])
+        assert (await start(client, "venues", venue_types=[]))["run_id"] == everything["run_id"]
+
+        unknown = await client.post("/venues/runs", json={**BODY, "venue_types": ["Hotels"]})
+        assert unknown.status_code == 422
+
+
+async def test_a_later_run_fills_the_missing_details_of_a_venue_quietly(
+    database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    collector = ScriptedCollector(venues=[("serpapi_maps", venue("Heaven", phone="+1 555 0100"))])
+    async with api(database_url, monkeypatch, collector) as client:
+        first = await start(client, "venues")
+        row = (await client.get(f"/runs/{first['run_id']}/results")).json()["items"][0]
+
+        # The same place again (as with KEEP_GOOGLE_DETAILS on): new details fill the gaps, the stored phone stays.
+        richer = venue("Heaven", phone="+1 555 9999", description="A club.").model_copy(
+            update={"opening_hours": "Monday 8 PM-2 AM", "price_text": "$$"}
+        )
+        collector.venues = [("serpapi_maps", richer)]
+        second = await start(client, "venues", force=True)
+
+        venue_block = (await client.get(f"/venues/candidates/{row['id']}")).json()
+        assert venue_block["version"] == 1
+        details = venue_block["venue"]
+        assert (details["phone"], details["opening_hours"], details["price_text"]) == (
+            "+1 555 0100",
+            "Monday 8 PM-2 AM",
+            "$$",
+        )
+        assert details["description"]["text"] == "A club."
+        run = (await client.get(f"/runs/{second['run_id']}")).json()
+        assert run["stats"]["candidates"]["unchanged"] == 1
+
+
+async def test_details_are_not_added_to_a_venue_that_was_already_decided(
+    database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    collector = ScriptedCollector(venues=[("serpapi_maps", venue("Heaven"))])
+    async with api(database_url, monkeypatch, collector) as client:
+        first = await start(client, "venues")
+        row = (await client.get(f"/runs/{first['run_id']}/results")).json()["items"][0]
+        await client.post(f"/venues/candidates/{row['id']}/reject", json={"version": 1, "reason": "not_lgbtq"})
+
+        collector.venues = [("serpapi_maps", venue("Heaven", phone="+1 555 0100"))]
+        await start(client, "venues", force=True)
+
+        assert (await client.get(f"/venues/candidates/{row['id']}")).json()["venue"]["phone"] is None
 
 
 async def test_a_run_whose_providers_fail_is_recorded_as_failed(

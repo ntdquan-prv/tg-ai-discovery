@@ -85,7 +85,7 @@ def _model(request: httpx.Request) -> httpx.Response:
     MODEL_REQUESTS.append(request.content.decode())
     body = json.loads(request.content)
     urls = re.findall(r"^URL: (.+)$", body["input"], flags=re.MULTILINE)
-    if "extract LGBTQ+ venues" in body["instructions"]:
+    if "extract venues" in body["instructions"]:
         arguments: dict[str, object] = {
             "venues": [
                 {

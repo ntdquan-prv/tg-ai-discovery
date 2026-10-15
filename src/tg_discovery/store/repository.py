@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from typing import cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, select, update
@@ -12,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tg_discovery.domain.enums import Flow
-from tg_discovery.domain.models import EventDraft, VenueDraft
+from tg_discovery.domain.models import EventDraft, EventImage, VenueDraft, union_images
 from tg_discovery.pipelines.discovery import CityTarget, Prepared, RunFilter
 from tg_discovery.store.models import (
     AuditLog,
@@ -219,6 +220,24 @@ def _columns(prepared: Prepared) -> Json:
     }
 
 
+def _merged_images(payload: Json, draft: EventDraft) -> list[Json]:
+    """The pictures stored for an event plus the ones a run just found, each address once: a run only adds pictures."""
+    stored = payload.get("images")
+    known = [EventImage.model_validate(raw) for raw in cast(list[object], stored)] if isinstance(stored, list) else []
+    return [cast(Json, image.model_dump(mode="json")) for image in union_images(known, draft.images)]
+
+
+# Details outside the content hash: a run that only brings them still counts as "unchanged" (KEEP_GOOGLE_DETAILS can
+# make a later run find a phone or hours the first run did not keep), so they fill the gaps of a stored candidate.
+_GAP_FIELDS = ("phone", "opening_hours", "description", "price_text")
+
+
+def _filled_gaps(payload: Json, draft: EventDraft | VenueDraft) -> Json:
+    """The details a run found that the stored candidate lacks; a stored value is never replaced."""
+    found = {name: getattr(draft, name, None) for name in _GAP_FIELDS}
+    return {name: value for name, value in found.items() if value and not payload.get(name)}
+
+
 @dataclass(slots=True)
 class SaveResult:
     outcomes: Counter[str]
@@ -261,10 +280,23 @@ async def save_candidates(
             row.last_seen_at = now
             row.seen_count += 1
             row.found_by = sorted({*row.found_by, *item.providers})
+            draft = item.draft
+            images = (
+                _merged_images(row.payload, draft)
+                if isinstance(draft, EventDraft) and row.status == "needs_review"
+                else None
+            )
             if outcome == "changed":
                 for name, value in _columns(item).items():
                     setattr(row, name, value)
                 row.last_changed_at = now
+            # Pictures and the details above are not part of the content hash, so a run that only finds more of them
+            # still counts as "unchanged": they are added quietly, without a new version, while it awaits review.
+            quiet = _filled_gaps(row.payload, draft) if row.status == "needs_review" else {}
+            if images is not None and images != row.payload.get("images", []):
+                quiet["images"] = images
+            if quiet:
+                row.payload = {**row.payload, **quiet}
         result.outcomes[outcome] += 1
         result.candidate_ids.append(row.id)
         session.add(

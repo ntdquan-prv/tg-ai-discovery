@@ -37,6 +37,13 @@ Venues have the same endpoints under `/venues/...`; the packet has a `venue` blo
 `timezone` is required (TravelGay knows it per city). `lat` and `lng` are optional: without them the city is looked up
 once on Nominatim. `window_days` only matters for events. At most 10 cities.
 
+Venue runs also take `venue_types`, any of `Cafe`, `Restaurant`, `Adults`, `Bars`, `Dance Club`, `Saunas`, `Massage`,
+`Gyms`, `Attractions`, `Tours` (left out or empty: all ten; another value is a `422`). Each type is searched with three
+queries (a general one, a gay or gay-friendly one and a third wording), so the cost and the time of a run follow the
+number of types: about 0.06 USD per type and city, about 0.57 USD for all ten. Venues are not limited to LGBTQ+ places,
+and the type only decides what is searched: a venue of another type, or of no clear type, that comes back is kept.
+The same request with other types is another run; the same types in another order are the same request.
+
 ## Authentication
 
 With `SERVICE_TOKEN` set, every call needs `Authorization: Bearer <token>`, `X-Admin-Id` and `X-Admin-Role`
@@ -51,11 +58,32 @@ sources. Venues also carry coordinates, type, website, phone and opening hours w
 
 Often empty, so the screens need an empty state: the organiser (events: a name only, and only when a source states it;
 phone and email are not collected), the description (an AI draft from the source), `tickets.kind` (read from the price
-text), `lat`/`lng` of events, and for Google-derived data everything except names, addresses, coordinates, links and ids.
+text), `lat`/`lng` of events, a venue's `price_text` (such as `$$`), and for Google-derived data everything except names,
+addresses, coordinates, links and ids. With `KEEP_GOOGLE_DETAILS=true` (the owner's switch for the POC, off by default
+because Google's terms do not allow storing them) Google's phone, opening hours, description and price are kept as well;
+Google Maps gives them for most venues, while Google's events pack has none of them. A later run fills a phone, hours,
+description or price that a candidate waiting for review lacks, without a new `version`; it never replaces a stored one.
 
-Not collected yet: images, topics, expected attendance, the finer event category, the AI verdict, the match with a
-TravelGay record (`dedupe`), SSE progress and edit-before-approve. The fields exist in the packet (empty) so the shape
+Event pictures (`event.images`): the URLs of the pictures of the pages that are about that event alone, up to 20, each
+with the page it came from (`source_url`) and the page's own `alt` text. Two sources feed them: Exa's main picture of the
+page, and the page itself, which the service reads (`FETCH_EVENT_PICTURES`, on by default): the social preview first,
+then the pictures of the article, each once in its largest spelling. Blurred stand-ins, logos, icons, avatars, banners,
+tracking pixels, pictures in the page header, navigation or footer, and cards that link to other pages are left out.
+A page that names several events (a calendar, a list) adds no picture to any of them, because it does not say whose
+picture is whose. Pages are fetched politely (`robots.txt` honoured, one request at a time per site, never Facebook,
+Instagram or Google, behind the SSRF guard with the connection pinned to the checked address). The pictures are never
+downloaded or stored here, so check the right to use one before copying it to your own storage. A later run adds
+pictures to a candidate that is still waiting for review, without a new `version`. Google-derived events have none.
+Venues have no pictures yet.
+
+Not collected yet: venue pictures, topics, expected attendance, the finer event category, the AI verdict, the match with
+a TravelGay record (`dedupe`), SSE progress and edit-before-approve. The fields exist in the packet (empty) so the shape
 will not change when they are filled.
+
+`venue.venue_type` is one of the ten types above, or `null` when the sources do not make it clear (a hotel, a shop).
+For venues, `lgbtq_level` and `why_relevant` say how far a venue is LGBTQ+ (`primary`, `friendly`, `unclear`, `no`),
+read from the sources; it is information for the reviewer and does not change the score. Events are still LGBTQ+
+events: one that is not is dropped.
 
 `ai_review.cons` is a rule-based list of what to look at twice (one source only, no official page, inferred year...).
 `fast_approve` is only a label for an easy approve.
@@ -64,3 +92,14 @@ will not change when they are filled.
 
 A run reads `BUDGET_USD_PER_RUN` and stops searching before it would spend more (`stats.stopped_by_budget`). Providers
 whose terms need the owner's review (Brave, Parallel, SerpApi) run only when named in `ACCEPTED_TERMS`.
+
+## How long a run took
+
+`GET /runs/{id}` gives `duration_s` (start to finish) and `stats.timing`: `total_s`, and for each city its `seconds`
+split into `locate_s` (finding the area), `collect_s` (searching, reading and pictures), `merge_s` (merging and scoring)
+and `save_s`, plus `busy`: for each kind of call (`search:exa`, `search:serpapi_events`, `places:serpapi_maps`, `extract`,
+`pictures`) the number of `calls`, their `total_s` and the `slowest_s`. The calls of a city overlap, so the totals in
+`busy` can add up to more than `collect_s`; the slowest call and the kind with the largest total show where the wait was.
+
+The same figures go to the service log, one line per step (`run started`, `city done`, `run finished`), for example
+`city done city=Bangkok seconds=121.3 locate_s=0.0 collect_s=118.2 merge_s=0.4 save_s=0.3 drafts=176 candidates=76 ...`.

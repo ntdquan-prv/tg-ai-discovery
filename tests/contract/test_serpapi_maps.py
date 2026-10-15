@@ -20,6 +20,7 @@ from tg_discovery.providers.serpapi import SEARCH_URL
 API_KEY = "serp-test-key-123"
 AREA = BoundingBox(south=13.6, west=100.4, north=13.9, east=100.7)
 QUERY = VenueQuery(text="gay bar", country="TH", city="Bangkok", area=AREA, language="en", max_results=20)
+DASH = "\N{EN DASH}"  # Google writes ranges of hours and prices with it
 
 # Pyright checks the protocol and the constructor the registry calls (the HTTP layer, then the key).
 _conforms: Callable[[MeteredHttp, str], VenueProvider] = SerpApiMaps
@@ -149,11 +150,14 @@ async def test_a_place_with_everything_gives_a_complete_draft(make_http: HttpFac
     result = await _adapter(make_http).find_venues(QUERY)
 
     bar = result.venues[0]
-    assert bar.venue_type == "Bar"
+    assert bar.venue_type == "Bars"
     assert bar.address == "Soi Si Lom 4, Bang Rak, Bangkok 10500"
     assert (bar.lat, bar.lng) == (13.7284, 100.5329)
     assert bar.website == "https://bar-example.example"
     assert bar.phone == "+66 2 000 0001"
+    assert bar.opening_hours == f"Monday 8 PM{DASH}2 AM; Tuesday 8 PM{DASH}2 AM"
+    assert bar.description == "Small gay bar with drag shows on Fridays."
+    assert bar.price_text == "$$"
     assert bar.operating_status is OperatingStatus.UNKNOWN
     assert bar.lgbtq is not None
     assert (bar.lgbtq.level, bar.lgbtq.evidence) == (LgbtqLevel.PRIMARY, [])
@@ -169,7 +173,7 @@ async def test_a_place_with_everything_gives_a_complete_draft(make_http: HttpFac
             retrieved_at=result.call.at,
         )
     ]
-    assert bar.missing_fields == ["opening_hours", "description"]
+    assert bar.missing_fields == []
 
 
 @respx.mock
@@ -182,7 +186,7 @@ async def test_places_with_less_data_still_become_drafts(make_http: HttpFactory)
     assert (club.venue_type, club.website, club.phone, club.lgbtq) == ("Dance Club", None, None, None)
     # A Facebook page is not a website; a closure written into open_state is a closure.
     assert (sauna.venue_type, sauna.website, sauna.operating_status) == (
-        "Sauna",
+        "Saunas",
         None,
         OperatingStatus.PERMANENTLY_CLOSED,
     )
@@ -198,24 +202,47 @@ async def test_places_with_less_data_still_become_drafts(make_http: HttpFactory)
 
 
 @respx.mock
-async def test_ratings_reviews_photos_and_hours_are_not_carried(make_http: HttpFactory) -> None:
+async def test_ratings_reviews_and_photos_are_not_carried(make_http: HttpFactory) -> None:
     _serve()
 
     result = await _adapter(make_http).find_venues(QUERY)
 
     dumped = result.model_dump_json()
-    for leftover in ("8123", "AF1Qip", "thumb-example", "8 PM", "reviews_link", "photos_link", "dine_in", "$$"):
+    for leftover in ("8123", "AF1Qip", "thumb-example", "reviews_link", "photos_link", "dine_in", "Closes 2 AM"):
         assert leftover not in dumped
 
 
+async def test_a_single_place_gives_its_hours_as_a_list_of_days(make_http: HttpFactory) -> None:
+    hours = [{"wednesday": f"6:30 AM{DASH}5 PM"}, {"thursday": "Closed"}, {"friday": "  "}, "not a day"]
+    with respx.mock:
+        respx.get(SEARCH_URL).mock(
+            return_value=httpx.Response(200, json={"place_results": _place(hours=hours, price=f"$10{DASH}20")})
+        )
+        (venue,) = (await _adapter(make_http).find_venues(QUERY)).venues
+
+    assert venue.opening_hours == f"Wednesday 6:30 AM{DASH}5 PM; Thursday Closed"
+    assert venue.price_text == f"$10{DASH}20"
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [{}, {"hours": "Open ⋅ Closes 2 AM"}, {"operating_hours": {}}, {"operating_hours": {"monday": " "}}],
+)
 @respx.mock
-async def test_scrubbing_keeps_the_ids_and_the_level_and_drops_the_phone(make_http: HttpFactory) -> None:
+async def test_no_week_of_hours_means_no_opening_hours(make_http: HttpFactory, fields: dict[str, object]) -> None:
+    (venue,) = await _fetch(make_http, _place(**fields))
+
+    assert venue.opening_hours is None
+
+
+@respx.mock
+async def test_scrubbing_keeps_the_ids_and_the_level_and_drops_the_details(make_http: HttpFactory) -> None:
     _serve()
 
     bar = (await _adapter(make_http).find_venues(QUERY)).venues[0]
     scrubbed = scrub_google_derived(bar)
 
-    assert scrubbed.phone is None
+    assert (scrubbed.phone, scrubbed.opening_hours, scrubbed.description, scrubbed.price_text) == (None,) * 4
     assert scrubbed.external_ids == bar.external_ids
     assert (scrubbed.name, scrubbed.address, scrubbed.lat, scrubbed.website) == (
         bar.name,
@@ -225,6 +252,21 @@ async def test_scrubbing_keeps_the_ids_and_the_level_and_drops_the_phone(make_ht
     )
     assert scrubbed.lgbtq is not None
     assert scrubbed.lgbtq.level is LgbtqLevel.PRIMARY
+
+
+@respx.mock
+async def test_with_the_owners_switch_the_details_are_kept(make_http: HttpFactory) -> None:
+    _serve()
+
+    bar = (await _adapter(make_http).find_venues(QUERY)).venues[0]
+    kept = scrub_google_derived(bar, keep_details=True)
+
+    assert (kept.phone, kept.opening_hours, kept.description, kept.price_text) == (
+        bar.phone,
+        bar.opening_hours,
+        bar.description,
+        bar.price_text,
+    )
 
 
 @respx.mock
@@ -277,15 +319,19 @@ async def test_a_search_that_google_resolves_to_one_place_comes_back_as_place_re
 @pytest.mark.parametrize(
     ("types", "venue_type", "level"),
     [
-        (["Gay bar"], "Bar", LgbtqLevel.PRIMARY),
-        (["Lesbian bar", "Bar"], "Bar", LgbtqLevel.PRIMARY),
-        (["LGBT bar"], "Bar", LgbtqLevel.PRIMARY),
+        (["Gay bar"], "Bars", LgbtqLevel.PRIMARY),
+        (["Lesbian bar", "Bar"], "Bars", LgbtqLevel.PRIMARY),
+        (["LGBT bar"], "Bars", LgbtqLevel.PRIMARY),
         (["Queer cafe"], "Cafe", LgbtqLevel.PRIMARY),
+        (["Gay sauna"], "Saunas", LgbtqLevel.PRIMARY),
         (["Night club"], "Dance Club", None),
-        (["Bar"], "Bar", None),
-        (["Sex shop"], "Shop", None),
-        (["Massage spa", "Spa"], "Spa", None),
-        (["Hotel"], "Hotels", None),
+        (["Bar"], "Bars", None),
+        (["Sex shop"], "Adults", None),
+        (["Massage spa", "Spa"], "Massage", None),
+        (["Gym"], "Gyms", None),
+        (["Tourist attraction", "Museum"], "Attractions", None),
+        (["Tour operator"], "Tours", None),
+        (["Hotel"], None, None),
         (["Event venue"], None, None),
         ([], None, None),
     ],

@@ -1,0 +1,803 @@
+TG-DISCOVERY - SERVER-SIDE LOAD AND RELIABILITY RISK REPORT
+============================================================
+
+Date of report : 2026-10-12
+Code assessed  : the first API slice of tg-discovery (runs, review table, review packet,
+                 approve/reject into an outbox). There is no queue, worker or scheduler yet.
+                 The repository was not modified to produce this report.
+Evidence       : code review; a scripted load simulation run on 2026-10-10 (no vendor was
+                 called, nothing was spent); a merge micro-benchmark; the two real New York
+                 runs of 2026-10-08.
+See also       : tg-discovery-repo-guide.md (section 7, section 13.5, milestone M4),
+                 docs/api.md, docs/development-problems.md
+
+
+CONTENTS
+   1. Purpose and scope
+   2. Executive summary
+   3. The scenario and its volume
+   4. How the service runs today
+   5. How to read the evidence tags
+   6. Findings
+        6.1 Application defects exposed by concurrency (C1-C12)
+        6.2 Vendor limits, budget and cost (K1-K5)
+        6.3 Infrastructure and operations (O1-O8)
+        6.4 Scheduler design issues (S1-S7)
+   7. What already works
+   8. Recommendations
+   9. Prioritized action plan
+  10. Acceptance tests
+  11. Decisions needed from the owner
+  12. Limits of this report
+   Appendix A. Simulation setup and raw results
+   Appendix B. Cost model
+   Appendix C. Terms
+
+
+1. PURPOSE AND SCOPE
+--------------------
+
+This report lists what can go wrong on the server side when many discovery runs start at the
+same time, typically because several admins have scheduled discovery for the same moment (for
+example 05:00) in the TravelGay CMS. It also lists other reliability and operations risks found
+while analysing that case.
+
+Every issue has an ID, a severity, the kind of evidence behind it, what happens, the cause, a
+recommended fix and a rough effort. Section 11 lists the decisions that only the owner can take.
+
+Out of scope: search quality, scoring quality, the review UI, and the legal terms of the
+providers (mentioned only where they affect operations).
+
+
+2. EXECUTIVE SUMMARY
+--------------------
+
+Bottom line
+
+With the current design, the 05:00 scenario (3 admins, about 10 countries x 5 cities each, all
+fired by the CMS at the same moment) will not work reliably. CPU and RAM are not the limiting
+factor. What fails first is:
+
+  a. A defect that rejects roughly 40-55% of a burst of requests with HTTP 500 (C1).
+  b. The lack of a queue and of limits shared between runs: every accepted run starts at once
+     and pushes the vendors past their limits and past its own budget (C2, C3, K1, K2).
+  c. In-process background execution: every restart, deploy or crash loses the runs in
+     progress (O1, C7).
+  d. A CPU-heavy merge step that freezes the whole API for seconds (C4, O2).
+  e. Vendor quotas and cost: about 74 USD per morning for 150 cities in both flows, and no
+     daily spending cap (K2, K3).
+
+The design that fixes this is already in the guide (section 7): a Postgres queue, worker(s) and
+a scheduler. The first slice runs the work inside the API process so that the API could be
+delivered early; the problems below are the price of that shortcut.
+
+What would happen at 05:00 with today's code
+
+  1. 05:00:00  The CMS sends 30 (one flow) or 60 (both flows) POST requests within seconds. In
+               the simulation 16 of 30 and 25 of 60 were refused with an internal error (C1).
+               Those schedules do not run unless the CMS retries.
+  2. 05:00:01  Every accepted run starts at once (C2): up to 8 provider calls per run and no
+               limit across runs. Vendor limits are exceeded (C3, K2): HTTP 429, timeouts,
+               parallel Overpass queries, a burst of Nominatim lookups.
+  3. All along Each city ends with a CPU-bound merge that blocks the API for about 0.5 s and up
+               to several seconds on large cities (C4). Health checks and CMS polling stall
+               (O2).
+  4. Minutes   A 5-city run reaches the 1 USD default cap around its fourth city and ends
+     later     'partial' with no results for the last city (K1).
+  5. Any time  A restart (deploy, crash, out of memory, health-check kill) ends every run in
+               progress. They are marked failed at the next startup and nothing resumes
+               (O1, C7).
+  6. By 06:00  Spend is in the tens of USD, partly on calls that failed or timed out (K3).
+               Nobody is told (O7).
+
+Findings at a glance
+
+  ID    Severity    Issue                                                      Evidence
+  ----  ----------  ---------------------------------------------------------  -----------
+  C1    HIGH        Run-code collision rejects part of a burst (HTTP 500)      simulated
+  C2    HIGH        No queue, no cap on simultaneous runs                      simulated
+  C3    HIGH        Rate limiters are per run, not shared                      code
+  C4    MED-HIGH    Event merge is ~quadratic and freezes the API              measured
+  C5    MEDIUM      Concurrent save of one candidate fails a whole run         simulated
+  C6    MEDIUM      Candidate changes do not bump version (stale approvals)    simulated
+  C7    MEDIUM (*)  Startup cleanup fails runs owned by other processes        simulated
+  C8    MEDIUM      No wall-clock limit per run; a hung run blocks its slot   code
+  C9    MEDIUM      Overlapping requests are not deduplicated (paid twice)     code
+  C10   LOW         "Today" is the UTC date, not the city's date               code
+  C11   LOW         Data growth (sightings, outbox, audit log)                 estimate
+  C12   LOW         Sockets / file descriptors with many runs                  unverified
+  K1    HIGH        Default run budget (1 USD) too low for 5-city runs         calculated
+  K2    HIGH        Vendor quotas and policies cannot carry the load           vendor+calc
+  K3    HIGH        About 74 USD per morning, no daily spending cap            calculated
+  K4    INFO        Reuse windows (3 h / 168 h) can surprise admins            code
+  K5    HIGH        Deployment configuration prerequisites                     code
+  O1    HIGH        In-flight runs are lost on restart, deploy or crash        code+simul.
+  O2    MED-HIGH    Health-check restarts while the event loop is blocked      inference
+  O3    MEDIUM      Memory exhaustion (OOM)                                    unmeasured
+  O4    HIGH impact Database outage, maintenance window, capacity              architecture
+  O5    HIGH prob.  Vendor outage, throttling, key expiry                      code
+  O6    MEDIUM      Single host is a single point of failure                   architecture
+  O7    MEDIUM      No monitoring, alerting or morning summary                 code
+  O8    INFO        Scaling out does not fix the problem                       analysis
+  S1-7  DESIGN      Scheduler issues to avoid when schedules are built         design
+  (*) HIGH if the service is scaled out or deployed with rolling restarts.
+
+Recommended order (details in sections 8 and 9)
+
+  Phase 0  Before any scheduled use: fix C1, C5, C6; raise the budget cap and add a daily cap
+           (K1, K3); run exactly one API process; configure the deployment correctly (K5); give
+           the CMS the integration rules of section 8.3.
+  Phase 1  Before the 05:00 pattern goes live: queue + worker + global limits (C2, C3, C7, C8,
+           C9, K2) and the merge moved off the API loop (C4).
+  Phase 2  Scheduler (S1-S7), merge algorithm, retention, per-city dates.
+  Phase 3  Monitoring, alerts, load tests in CI, cost reduction by watchlist refresh.
+
+Decision needed now: where the schedules live (this service, as the guide proposes, or the
+CMS). See section 11.
+
+
+3. THE SCENARIO AND ITS VOLUME
+------------------------------
+
+The scenario was defined by the project owner on 2026-10-10:
+
+  * The TravelGay CMS has the scheduling screen. At the scheduled time it calls this service's
+    HTTP API (one POST per country and flow). The service does not know about schedules yet.
+  * About 3 admins each schedule discovery for about 10 countries, about 5 cities per country,
+    all at the same moment (05:00), for example US (New York, Los Angeles, ...) and Thailand
+    (Bangkok, ...).
+  * Both flows may be scheduled: events and venues.
+
+Request shape: POST /api/v1/events/runs and POST /api/v1/venues/runs. One request carries one
+country and 1 to 10 cities (MAX_CITIES = 10). A run handles its cities one after another.
+
+Worst case assumed in this report: the admins' lists do not overlap, so no request is answered
+by another admin's run.
+
+  Item                                      Events   Venues     Both
+  ----------------------------------------  ------   ------   ------
+  POST requests (one country each)              30       30       60
+  City searches                                150      150      300
+  SerpApi searches (12 per city)             1,800    1,800    3,600
+  Exa searches (12 per city)                 1,800    1,800    3,600
+  AI extraction calls                        3,600    1,800    5,400
+    of which large (about 12,000 tokens)     1,800    1,800    3,600
+  Overpass queries                               0      150      150
+  Nominatim lookups (if no lat/lng is sent)    150      150      300
+  Spend at list prices, USD (approx.)           39       35       74
+
+Notes: per-city figures come from the two real New York runs (Appendix B). Input tokens are about
+43 million per morning for both flows (estimate: 12 large calls per city and flow x about
+12,000 tokens). To finish 3,600 SerpApi searches in one hour at the observed median latency of
+about 14 s per search, about 14 searches must run at the same time (about 7 for 1,800). The
+SerpApi plan must allow that.
+
+
+4. HOW THE SERVICE RUNS TODAY
+-----------------------------
+
+Facts that matter for load (file references are relative to src/tg_discovery/):
+
+  * One FastAPI process. POST .../runs inserts a row in discovery_runs (status 'queued') and
+    starts the run with asyncio.create_task inside the same process (main.py:62-69). The reply is
+    HTTP 202 with {run_id, code, status, deduplicated}.
+  * Inside a city a run launches up to 8 provider jobs at once (LiveCollector.CONCURRENCY,
+    pipelines/live.py:42): 12 search queries per flow and provider.
+  * Each run builds its own provider clients, rate limiters, budget (default 1 USD) and geocoder
+    cache (pipelines/live.py:229-261).
+  * After each city the drafts are merged, scored and saved (store/repository.py save_candidates);
+    progress and statistics are written to the run row.
+  * Single flight: a partial unique index on (flow, filter_hash) where status is 'queued' or
+    'running' (store/models.py:64-70). Reuse window: events 3 h, venues 168 h (config.py:67-68).
+    force=true skips only the reuse window, not the active-run check (api/runs.py:36-42).
+  * At startup every process marks all queued and running runs as failed
+    (store/repository.py:154-163).
+  * Review: approve and reject take a row lock and check a version number. Approving writes one
+    publish_outbox row; nothing is published and no consumer exists yet.
+  * Database: Postgres through SQLAlchemy async with the default pool (5 connections + 10
+    overflow) per process.
+  * Providers in this deployment: Exa, SerpApi (Google results with the events pack; Google
+    Maps), OpenStreetMap Overpass, Nominatim, and AWS Bedrock (openai.gpt-oss-120b), the only AI.
+
+
+5. HOW TO READ THE EVIDENCE TAGS
+--------------------------------
+
+  [SIMULATED]  Reproduced with the real application and scripted providers (Appendix A).
+  [MEASURED]   Timed on synthetic data of realistic size (Appendix A).
+  [CODE]       Established by reading the code; not exercised under load.
+  [CALC]       Calculated from the two real New York runs and list prices (Appendix B).
+  [VENDOR]     Taken from the vendor's published limit or policy, as read on the date given.
+  [INFERENCE]  Follows from measured behaviour and from how platforms usually behave; not tested.
+  [UNMEASURED] Plausible but not measured here. Verify in a rehearsal.
+
+Severity: HIGH = breaks or corrupts the scenario; MEDIUM = degrades it or costs money or data
+quality; LOW = minor or only at larger scale; INFO = good to know.
+
+
+6. FINDINGS
+-----------
+
+6.1 Application defects exposed by concurrency
+..............................................
+
+C1. Run-code collision rejects part of a burst                        [HIGH] [SIMULATED]
+    What happens: when many POST requests arrive together, some fail with "RuntimeError: could
+    not find a free run code" (HTTP 500 in production). A refused schedule does not run unless
+    the caller retries.
+    Evidence: 30 requests with 30 distinct filters: 14 accepted, 16 refused. 60 requests: 35
+    accepted, 25 refused. 30 requests with only 10 distinct filters: 28 accepted, 2 refused.
+    Cause: create_run() builds the human-readable code DSC-YYYYMMDD-NNN as (number of runs
+    created today + 1) and retries only CODE_ATTEMPTS = 5 times when the unique constraint on
+    the code is violated. Concurrent requests pick the same number and run out of attempts
+    (store/repository.py:30, 68-99).
+    Fix: allocate the number atomically (a Postgres sequence, or a per-day counter row updated
+    with UPDATE ... RETURNING). Keep the unique constraint. The code is cosmetic; the id is a UUID.
+    Effort: S.
+
+C2. No queue, no cap on simultaneous runs                             [HIGH] [SIMULATED]
+    What happens: every accepted run starts immediately as an asyncio task in the API process
+    (main.py:62-69). In the simulation 35 accepted runs searched up to 26 cities at the same
+    moment. With 60 accepted runs and 8 provider jobs per run, about 480 outbound calls can be
+    in flight.
+    Impact: vendor limits (K2), budget stops (K1), memory growth (O3), a starved API (C4, O2).
+    Fix: a database-backed queue. A run stays 'queued' until a worker claims it; the number of
+    simultaneous runs is a setting. See section 8.2.
+    Effort: M-L.
+
+C3. Rate limiters are per run, not shared                                     [HIGH] [CODE]
+    What happens: every run builds its own provider clients and MeteredHttp instances, each with
+    its own semaphore and minimum-interval lock (pipelines/live.py:229-261). N concurrent runs
+    multiply the request rate to every vendor by N. The limits written into the adapters are
+    valid for ONE run at a time:
+        Exa 4 concurrent, 0.1 s apart; SerpApi 2 concurrent, 0.5 s apart;
+        Overpass 1 concurrent, 2.0 s apart; Nominatim 1 concurrent, 1.1 s apart;
+        Bedrock 4 concurrent.
+    The Nominatim result cache is also per run (LiveGeocoder).
+    Impact: violates the usage policies of Overpass (no parallel scripts) and Nominatim (at most
+    1 request per second): HTTP 429 or 403, possible IP block; exceeds Exa's 10 requests per
+    second and Bedrock quotas.
+    Fix: create provider clients and limiters once per worker process and share them between
+    runs (separate the limiter from the per-run budget guard); store geocoding results in the
+    database; cap simultaneous runs. With more than one worker process the limiters must be
+    shared through the database (section 8.2).
+    Effort: M.
+
+C4. Event merge is ~quadratic and freezes the API                    [MED-HIGH] [MEASURED]
+    What happens: grouping, merging and scoring the drafts of a city (prepare_events,
+    prepare_venues) is CPU-bound Python that runs on the event loop that also serves the API.
+    Measured on synthetic drafts with about 25% near-duplicates:
+        events : 220 drafts 650 ms;     750 drafts 8,076 ms   (roughly quadratic)
+        venues : 398 drafts  38 ms;   1,250 drafts   241 ms
+    The real New York events run produced 176 drafts from 24 searches; larger cities can
+    produce several hundred.
+    Impact: while a merge runs, nothing else on that process makes progress: no request, no
+    health check, no other run's network handling.
+    Fix: (1) compare only drafts that share a blocking key (same venue key or overlapping date
+    window) instead of all pairs; (2) run the merge in a worker process or a thread/process
+    pool, not on the API loop; (3) keep the benchmark as a regression test.
+    Effort: M.
+
+C5. Concurrent save of one candidate fails a whole run                [MEDIUM] [SIMULATED]
+    What happens: save_candidates() reads the existing fingerprints, then inserts the missing
+    ones, without ON CONFLICT. Two runs that share a city (same country and city name) and find
+    the same candidate at almost the same moment both insert. The second commit violates the
+    unique constraint on fingerprint; the exception ends the whole run as 'failed' and the
+    remaining cities are skipped although their searches were paid for.
+    Evidence: 20 pairs of overlapping runs (40 runs): 4 failed with IntegrityError.
+    Fix: INSERT ... ON CONFLICT (fingerprint) DO UPDATE, or catch the error and re-read. A failed
+    save of one city should be a city-level problem, not a run-level failure.
+    Effort: S.
+
+C6. Candidate changes do not bump version (stale approvals)           [MEDIUM] [SIMULATED]
+    What happens: when a later run finds a known candidate whose material content changed
+    (outcome 'changed'), save_candidates() overwrites payload, score and columns but leaves
+    version unchanged (store/repository.py:264-267). The optimistic lock in decide() therefore
+    cannot detect that the reviewer looked at older content.
+    Evidence: an admin sees version 1 with start time 21:00; a later run finds 22:30; version
+    stays 1; approving with version 1 returns HTTP 200 and the publish_outbox row carries 22:30.
+    Impact: an approval can queue content the reviewer never saw. Daily scheduled runs make
+    this frequent.
+    Fix: increment version on every material change while the status is 'needs_review', so the
+    reviewer gets HTTP 409 and reloads. Decided candidates stay frozen.
+    Effort: S.
+
+C7. Startup cleanup fails runs owned by other processes   [MEDIUM, HIGH if scaled] [SIMULATED]
+    What happens: at startup every process runs fail_interrupted_runs(), which marks ALL queued
+    and running runs as failed without knowing who owns them (store/repository.py:154-163). With
+    two uvicorn workers, two containers or a rolling deploy, a starting process fails the runs
+    of the others. The single-flight slot is released, so the same request can start again
+    (double cost); the original run later finishes and overwrites the status.
+    Evidence: with two app instances on one database a run went 'running' -> 'failed' right after
+    the second instance started; the same request then started a second run (2 city searches
+    instead of 1); the first run finished by itself and set 'succeeded'.
+    Also: on shutdown the tasks are cancelled and the run row stays 'running' until the next
+    startup marks it failed.
+    Fix: short term, run exactly one API process. Proper: runs carry an owner (worker id) and a
+    heartbeat; a reaper fails only runs whose heartbeat is stale; finish_run must not silently
+    overwrite a status set by the reaper.
+    Effort: M (together with the queue).
+
+C8. No wall-clock limit per run                                          [MEDIUM] [CODE]
+    What happens: each provider call has a timeout (30 s default, 90 s SerpApi, 120 s Bedrock
+    with up to 4 attempts) but a run as a whole has none, although the guide (section 7) asks
+    for a wall-time cap. A hung run keeps its single-flight slot: the same request is answered
+    with the stuck run (deduplicated), even with force=true, until the service restarts.
+    Fix: a per-run deadline (for example 20-30 minutes) with cancellation and a final status;
+    a heartbeat-based reaper; a cancel endpoint.
+    Effort: S-M.
+
+C9. Overlapping requests are not deduplicated (paid twice)               [MEDIUM] [CODE]
+    What happens: single flight and the reuse window are keyed by the digest of the whole
+    request (flow, country, sorted cities, window_days for events) (pipelines/discovery.py:
+    87-95). {New York, Boston} and {New York} are different requests, so New York is searched
+    and paid for twice. A different window_days makes even identical city lists different.
+    Fix: deduplicate per (flow, country, city) with a per-city reuse window; a run becomes a set
+    of city tasks, some of which can be answered from recent results.
+    Effort: M.
+
+C10. "Today" is the UTC date, not the city's date                           [LOW] [CODE]
+    What happens: the run uses today = clock().date() with the clock in UTC for every city
+    (pipelines/runs.py). It feeds the prompt's "Today's date", the 'expired' rule and year
+    inference. For cities east of UTC scheduled in their local early morning (Bangkok at 05:00
+    is 22:00 UTC the day before) the date is one day behind, so an event that ended yesterday
+    locally can still look upcoming.
+    Fix: compute today per city from the city's time zone (already in the request).
+    Effort: S.
+
+C11. Data growth                                                      [LOW] [ESTIMATE]
+    What happens: every run writes one 'sightings' row per candidate it sees. A New York-size
+    city produced 76 event and 167 venue candidates, so daily runs over 150 cities can add tens
+    of thousands of rows per day. publish_outbox has no consumer yet and audit_log grows with
+    every decision.
+    Fix: retention job (the guide asks for TTLs on rejected and expired data), table-size
+    monitoring, index review.
+    Effort: S.
+
+C12. Sockets and file descriptors with many runs                      [LOW] [UNVERIFIED]
+    What happens: each run opens its own HTTP client (up to 100 connections by default) and
+    runs up to 8 jobs at once, so dozens of runs can hold hundreds of sockets. A host limit
+    such as 1,024 open files could be reached with 100 or more runs.
+    Fix: shared clients per worker; check ulimit -n and container limits; rehearse.
+    Effort: S.
+
+
+6.2 Vendor limits, budget and cost
+..................................
+
+K1. Default run budget (1 USD) too low for 5-city runs                   [HIGH] [CALC]
+    What happens: BUDGET_USD_PER_RUN defaults to 1.0 (config.py:66; maximum 50). One New York
+    city cost 0.26 USD (events) and 0.23 USD (venues) in the real runs, so a 5-city run costs
+    about 1.15-1.3 USD. When the cap is reached the collector stops (stopped_by_budget) and the
+    remaining cities get no results; the run ends 'partial'. Without anyone reading
+    stats.stopped_by_budget, every 5-city run would be incomplete unnoticed.
+    Fix: raise the cap or budget per city (for example 0.40 USD x number of cities); add a daily
+    cap with a circuit breaker (guide section 7); show stopped_by_budget in the CMS.
+    Effort: S.
+
+K2. Vendor quotas and policies cannot carry the load                [HIGH] [VENDOR + CALC]
+    SerpApi
+      Demand : 1,800 searches per flow per morning (3,600 for both).
+      Limit  : the free plan allows 250 searches per month and 50 per hour (SerpApi pricing
+               page, read 2026-10-08), so it cannot carry this. Paid plans have their own
+               volume and hourly throughput limits (not verified: confirm with SerpApi).
+      Notes  : median latency about 14 s; 5 of 12 searches timed out at 90 s in the real API
+               events run.
+    Exa
+      Demand : 1,800 searches per flow (3,600 for both).
+      Limit  : 10 requests per second on /search for the account (adapter docstring).
+    OpenStreetMap Overpass (public server)
+      Demand : 150 queries (venues).
+      Limit  : no parallel scripts (adapter comment quoting the policy). HTTP 429 was already
+               seen once (Phuket, 2026-10-08).
+      Notes  : it supplied 36 of 318 venue drafts in the real New York run (Google Maps 214).
+    Nominatim (public server)
+      Demand : up to 300 lookups if the CMS sends no coordinates.
+      Limit  : at most 1 request per second, results must be cached, an identifying User-Agent
+               is required; heavy use risks an IP block.
+    AWS Bedrock (openai.gpt-oss-120b)
+      Demand : about 5,400 calls and about 43 million input tokens per morning (estimate).
+      Limit  : account quotas (requests and tokens per minute) are not known; check Service
+               Quotas before go-live.
+    Impact: HTTP 429 and timeouts; failed calls are counted (a timeout is charged at the
+    estimate in the run budget); runs end 'partial' with silent gaps; possible blocks.
+    Fix: shared limiters (C3); quota counters per provider, hour and month stored in the
+    database, with a clear refusal reason shown to the admin; paid plans sized for the load;
+    the CMS sends lat/lng so Nominatim is not needed; disable OpenStreetMap for scheduled bulk
+    runs (PROVIDERS_ENABLED) or serialize it behind a single lane; request Bedrock quota
+    increases before go-live.
+    Effort: M.
+
+K3. About 74 USD per morning, no daily spending cap                      [HIGH] [CALC]
+    What happens: at list prices the scenario costs about 39 USD for 150 cities of events, 35
+    USD for 150 cities of venues, 74 USD for both, per morning (Appendix B). If events run daily
+    and venues weekly (venues are reused for 168 h by default) that is roughly 1,300 USD per
+    month for 150 distinct cities. Only a per-run cap exists. Unattended 05:00 runs can overspend
+    before anyone looks.
+    Fix: a daily and a monthly cap in the service with a circuit breaker; spending limits in the
+    vendors' dashboards; a cloud budget alert; deliberate choice of frequency and city lists; a
+    cheaper refresh (the guide's watchlist refresh skips unchanged sources with zero AI calls).
+    Effort: S-M.
+
+K4. Reuse windows can surprise admins                                    [INFO] [CODE]
+    What happens: venue runs are answered by the previous run for 168 h, event runs for 3 h
+    (config.py:67-68). A daily venue schedule therefore returns deduplicated=true on 6 of 7 days
+    (no cost, no new data). force=true bypasses the window but not the active-run check.
+    Fix: the CMS should show deduplicated and the age of the data; choose the windows per
+    product need.
+
+K5. Deployment configuration prerequisites                        [HIGH if missed] [CODE]
+    * AWS_BEDROCK_OPENAI_URL must end with /v1 (gpt-oss on Bedrock); the old value fails.
+    * NOMINATIM_USER_AGENT must carry a real contact; a placeholder example.com address was
+      rejected by Overpass with HTTP 406.
+    * ACCEPTED_TERMS must name the providers whose terms the owner accepted (serpapi_events,
+      serpapi_maps for the trial). Legal review of Google-derived data is advised before
+      production.
+    * SERVICE_TOKEN must be set in production: with no token the API answers 503 when
+      APP_ENV=prod, and is open in other environments.
+    * A SerpApi key appeared in a screenshot during development: rotate it before go-live.
+
+
+6.3 Infrastructure and operations
+.................................
+
+O1. In-flight runs are lost on restart, deploy or crash          [HIGH] [CODE + SIMULATED]
+    What happens: runs live only in the memory of the API process. A deploy, crash, out-of-memory
+    kill or host reboot ends them. Cities already saved remain, but the run is marked failed at
+    the next startup and nothing resumes. If the service is restarting at 05:00 the CMS calls
+    fail and those schedules are missed.
+    Fix: queue + worker (jobs live in the database and are re-claimed after a crash); graceful
+    shutdown (on SIGTERM stop claiming, finish or release the current job); CMS retry with
+    backoff; no deploys inside the schedule window; an automatic restart policy.
+
+O2. Health-check restarts while the event loop is blocked      [MED-HIGH] [INFERENCE]
+    What happens: a load balancer or orchestrator probes the health endpoint at intervals. When
+    a merge blocks the loop for seconds (C4) the probes time out; after the configured number
+    of failures the instance is killed and replaced, which kills the runs in progress (O1) and
+    can repeat.
+    Fix: move heavy work out of the API process; keep the liveness check trivial (no database
+    call) and the readiness check separate; set probe timeouts and grace periods above the
+    worst measured block; watch event-loop lag in production.
+
+O3. Memory exhaustion (OOM)                                           [MEDIUM] [UNMEASURED]
+    What happens: all concurrent runs share one process. Each in-flight extraction holds up to
+    48,000 characters of page text plus provider responses (Exa returns up to 8,000 characters
+    per page, 10 pages per call), and the drafts of a whole city are held until saved. Memory
+    was not measured; a few hundred MB at peak is plausible with 60 concurrent runs. On a small
+    instance (for example 512 MB) the OS or the container runtime may kill the process.
+    Fix: cap simultaneous runs; size the instance with headroom (start with 2-4 GB for API and
+    workers, to be validated); alert on memory; measure in a rehearsal with real-size payloads.
+
+O4. Database outage, maintenance window, capacity               [HIGH impact] [ARCHITECTURE]
+    What happens: one Postgres holds runs, candidates and, after the redesign, the queue. If it
+    is down the API fails and runs fail when saving. A managed database's maintenance window can
+    interrupt it for minutes; one that falls at 05:00 hits the schedule. A full disk stops
+    writes. Each process opens up to 15 connections by default, which is fine for a few
+    processes (Postgres default limit is 100).
+    Fix: managed Postgres (for example AWS RDS) with automated backups and point-in-time
+    recovery; maintenance window away from schedule times; alarms on disk and connections;
+    retention (C11); the CMS retries on 5xx.
+
+O5. Vendor outage, throttling, key expiry                         [HIGH probability] [CODE]
+    What happens: every provider can fail on its own. Today a failing provider is counted and
+    skipped and the run ends 'partial'; nothing retries later. An expired or rotated key fails
+    every call (HTTP 401) until fixed; an AI outage means no extraction at all.
+    Fix: job-level retries with backoff (queue); a circuit breaker per provider; error counts in
+    the run statistics; alerts on provider error rates; keys in a secrets manager (for example
+    AWS Secrets Manager) with a rotation procedure.
+
+O6. Single host is a single point of failure                     [MEDIUM] [ARCHITECTURE]
+    What happens: one API process on one host. If it dies nothing runs until it is replaced, and
+    schedules that fell in the gap are lost unless a catch-up policy exists.
+    Fix: automatic restart or replacement; a catch-up policy for due-but-not-run schedules. High
+    availability is probably not needed for 3 admins, but all state must live in Postgres, not
+    in memory.
+
+O7. No monitoring, alerting or morning summary                            [MEDIUM] [CODE]
+    What happens: logs are structured and runs store statistics and cost, but there are no
+    metrics, alerts or summary. A failure at 05:00 is found later by someone looking.
+    Fix: dashboards and alarms for runs by status, queue depth, run duration, cost per day
+    against the cap, provider 429 and timeout rates, API latency (p99) and event-loop lag,
+    memory, database connections and disk; a daily summary ("X runs, Y failed, Z USD"); the cost
+    endpoint planned in the guide (M4).
+
+O8. Scaling out does not fix the problem                                       [INFO] [ANALYSIS]
+    More or bigger machines do not raise vendor quotas and they make the burst worse, because
+    every extra process adds its own calls to the same accounts. Autoscaling API replicas also
+    multiplies C7 (startup cleanup). Scale workers only up to what the vendors and the database
+    can absorb.
+
+
+6.4 Scheduler design issues (apply when schedules are built)
+............................................................
+
+  S1. Thundering herd at round times (everybody picks 05:00). Enqueue with jitter or spacing,
+      keep a global concurrency cap, give manual runs priority over scheduled ones.
+  S2. Double firing when more than one process runs the scheduler. Use one scheduler or a
+      database lock, and make enqueueing idempotent (unique key on schedule id + fire time).
+  S3. Missed schedules after downtime. Define the policy (skip, or run once to catch up) and
+      make it visible.
+  S4. Time zones and daylight saving. Store the schedule's IANA time zone, compute the next fire
+      time in that zone, test the DST transitions.
+  S5. Overlapping schedules of different admins. Deduplicate per city (C9) before spending.
+  S6. Ownership and cost control. A schedule needs an owner, an enabled flag, per-schedule and
+      per-day cost caps and failure notification; decide what happens when an admin leaves.
+  S7. Where schedules live: in the CMS (it calls this API) or in this service (guide section 7:
+      a 'watches' table with a cron column; the CMS manages them through the API). Recommended:
+      in the service, so that spacing, per-city deduplication and budgets are decided in one
+      place and the CMS stays thin.
+
+
+7. WHAT ALREADY WORKS
+---------------------
+
+  * Identical simultaneous requests are deduplicated safely (unique partial index): 30 requests
+    with 10 distinct filters created exactly 10 runs; 18 requests were answered by an earlier run.
+  * Concurrent approve/reject on one candidate: row lock plus version check gives HTTP 409 to
+    the later reviewer.
+  * A run holds database connections only for short writes; the database showed no pressure in
+    the simulation.
+  * A failing provider does not fail the run: it ends 'partial' with errors counted, and results
+    are saved city by city, so a crash keeps the finished cities.
+  * Event-loop lag stayed small (max 127-159 ms) with small per-city data; the problem appears
+    with large merges (C4).
+  * A per-run budget does stop spending (K1: the default value is too low for this scenario).
+
+
+8. RECOMMENDATIONS
+------------------
+
+8.1 Immediate (before any scheduled use)
+
+  1. Fix C1 (run code), C5 (upsert), C6 (version bump), each with a test. Effort S each.
+  2. Run exactly one API process (C7) and write it into the operations notes.
+  3. Raise BUDGET_USD_PER_RUN or move to a per-city budget (K1); add a daily cap (K3).
+  4. Disable OpenStreetMap for scheduled runs or serialize it (K2). The CMS sends lat, lng,
+     timezone and tg_city_id for every city, so Nominatim is not called.
+  5. Complete the deployment configuration (K5); rotate the exposed SerpApi key.
+  6. Apply the CMS integration rules of section 8.3.
+  7. Start small in the first week (a few cities), then grow while watching cost, errors and
+     latency.
+
+8.2 Target design: queue + worker + scheduler (guide section 7)
+
+  Components: a stateless API -> a Postgres queue -> worker process(es) -> pipelines; a
+  scheduler (the 'watches' table with cron); a publisher later.
+
+  Properties:
+    * Enqueue in the same transaction that inserts the run. Workers claim with SELECT ... FOR
+      UPDATE SKIP LOCKED (or Procrastinate, a Postgres-native queue named in the guide).
+    * Global concurrency = number of simultaneous runs a worker handles (start with 2-3).
+    * Shared per-provider limiters and quota counters. Simplest start: ONE worker process that
+      runs 2-3 runs concurrently with async code, so the limiters can live in that process.
+      With several worker processes, per-process limiters multiply again (C3); then the limits
+      must be enforced through shared counters in the database.
+    * Heartbeat plus reaper, a run deadline, retries with backoff, graceful shutdown.
+    * City-level tasks with city-level single flight and reuse window; a budget per city and per
+      day; priority lanes (manual before scheduled).
+    * The merge runs in the worker (or a pool), with blocking keys instead of all pairs.
+    * Scheduler: jitter, catch-up policy, owner and caps per schedule (S1-S7).
+
+8.3 CMS integration rules
+
+  * Send the POST requests one after another, or a few at a time with a short pause, until C1 is
+    fixed and the queue exists. Spread schedules over a window (for example 05:00-06:30).
+  * Retry on connection errors and HTTP 5xx with exponential backoff. An identical request is
+    safe to retry: it is answered by the run that already exists.
+  * Treat HTTP 202 with deduplicated=true as success. Show it to the admin, with the age of the
+    data.
+  * Request body: country (ISO 3166-1 alpha-2), country_name, cities[] with name, timezone (IANA),
+    lat, lng, tg_city_id, and window_days (events). Headers: Authorization: Bearer <service
+    token>, X-Admin-Id, X-Admin-Role: runner.
+  * Poll GET /api/v1/runs/{run_id} for status, stats.progress, stats.candidates,
+    stats.stopped_by_budget and stats.errors; read results with GET /api/v1/runs/{run_id}/results.
+  * Do not schedule venue discovery daily (reuse window 168 h); events daily at most.
+
+8.4 Deployment and operations checklist (for DevOps)
+
+  * Processes: one API process (until C7 is fixed); one worker process after the redesign.
+  * Resources: start with about 2 vCPU and 2-4 GB for API plus worker, and a small managed
+    Postgres. Validate in a rehearsal and adjust.
+  * Health: separate liveness (cheap, no database) and readiness (database reachable); timeouts and
+    start period above the worst merge block; handle SIGTERM gracefully.
+  * Deploys: never inside a schedule window. Rolling deploys are safe only after the heartbeat
+    and reaper exist.
+  * Database: automated backups and point-in-time recovery, maintenance window away from the
+    schedules, alarms on disk and connections, a retention job.
+  * Secrets: a managed secret store, a rotation procedure, no secrets in images or logs.
+  * Network: outbound HTTPS to Exa, SerpApi, Overpass, Nominatim and the Bedrock endpoint.
+  * Quotas and spend: SerpApi and Exa plans sized for the load, Bedrock Service Quotas raised if
+    needed, spending limits in the vendors' dashboards, a cloud budget alert.
+  * Observability: the list in O7, sent to a channel that somebody reads.
+  * Host limits: container memory limit, ulimit -n, UTC server time.
+
+8.5 Alternatives considered
+
+  * Airflow. The guide (section 13.5) decided against it: the existing warehouse DAGs are not a
+    usable base, and the repository must not depend on Airflow. Airflow could fire schedules
+    and cap concurrent runs with pools, but it would not fix the service-side defects (C1,
+    C4-C8), does not enforce per-provider limits inside a run, and needs a dispatcher DAG to
+    follow schedules that admins create in the CMS. If it is ever used, it can only be an
+    external HTTP caller of this API.
+  * Postgres queue + worker + scheduler inside the service (recommended; guide section 7).
+  * Cloud scheduler + queue (for example EventBridge Scheduler + SQS + ECS or Lambda): fits if
+    the platform is AWS, but adds infrastructure and splits the logic.
+  * Redis-based queues (Celery, arq, RQ, Dramatiq): need Redis or RabbitMQ.
+  * Workflow engines (Temporal, Prefect, Dagster): powerful, too heavy for 3 admins.
+  Whatever starts the runs, the service still needs its own queue and limits, because the CMS
+  or any other caller can burst.
+
+
+9. PRIORITIZED ACTION PLAN
+--------------------------
+
+Effort sizes are rough, for one developer who knows the codebase: S = up to half a day,
+M = 1-3 days, L = 1-2 weeks.
+
+  Phase 0 - before any scheduled use (about 2-4 days of development)
+    Scope : C1, C5, C6; K1 and a simple daily cap (K3); K5; one API process; CMS rules (8.3).
+    Exit  : tests T1, T2, T4, T5 pass.
+
+  Phase 1 - before the 05:00 pattern goes live (about 2-3 weeks)
+    Scope : queue + worker; shared limiters and quota counters; heartbeat and reaper; run
+            deadline; per-city single flight; merge off the API loop (C2, C3, C4 in part, C7,
+            C8, C9, K2).
+    Exit  : tests T3, T6, T7, T8, T9, T10 pass; a rehearsal with scripted providers at 2x the
+            scenario shows no refused request and no failed run.
+
+  Phase 2 - scheduler and hardening (about 1-2 weeks)
+    Scope : scheduler with jitter, catch-up, ownership and caps (S1-S7); the merge algorithm
+            (C4); retention (C11); per-city date (C10); socket limits (C12).
+    Exit  : a schedule rehearsal over a DST change and a restart passes.
+
+  Phase 3 - operations (ongoing)
+    Scope : monitoring and alerts (O7); load tests in CI; cost endpoint and watchlist refresh
+            to cut spend (K3).
+    Exit  : dashboards and alarms are live; someone owns them.
+
+
+10. ACCEPTANCE TESTS
+--------------------
+
+The scenarios of the simulation (Appendix A) become automated tests with scripted providers over
+the test database:
+
+  T1  60 concurrent POSTs with distinct filters: every one is answered 202 (new or
+      deduplicated), none with 5xx.
+  T2  30 POSTs with 10 distinct filters: exactly 10 runs exist.
+  T3  With the cap set to N, at most N runs are 'running' at any moment; the others stay
+      'queued' and all finish.
+  T4  Pairs of runs that share a city: no run fails; candidate rows stay unique.
+  T5  A candidate whose start time changes after review was opened: version increases; approving
+      with the old version returns 409.
+  T6  Two API or worker processes: no run is failed by the other's startup; the same request
+      never runs twice.
+  T7  Merging 750 event drafts does not block the API: event-loop lag stays below 100 ms (or
+      the merge time stays below an agreed limit).
+  T8  A hung provider call ends the run within its deadline and frees the single-flight slot.
+  T9  A 5-city run either completes all cities or reports stopped_by_budget in its statistics.
+  T10 Kill the worker in the middle of a run: the run is re-claimed and completed, with no
+      duplicate candidates.
+
+
+11. DECISIONS NEEDED FROM THE OWNER
+-----------------------------------
+
+  1. Where do schedules live: in this service (recommended) or in the CMS?
+  2. Frequency and scope: events daily or weekly; venues weekly; how many cities; daily and
+     monthly spending caps.
+  3. Vendor plans: a SerpApi paid plan or an alternative, the Exa plan, Bedrock quotas; whether
+     to keep OpenStreetMap in scheduled runs.
+  4. Deployment target and availability expectation: is a few minutes of downtime at 05:00
+     acceptable if missed schedules are caught up?
+  5. Who receives alerts and the morning summary.
+  6. Legal review of Google-derived data and acceptance of vendor terms before production.
+
+
+12. LIMITS OF THIS REPORT
+-------------------------
+
+  * The simulation used scripted providers: no real latency, no HTTP 429, no vendor failures. It
+    proves concurrency defects in our own code, not vendor behaviour.
+  * Cost figures come from two real New York runs at list prices (SerpApi nominal 0.010 USD per
+    search). Other cities and paid plans will differ.
+  * The merge benchmark used synthetic drafts; real data will differ.
+  * Memory use, file-descriptor use and Bedrock quotas were not measured.
+  * Vendor limits are as read on the dates given (SerpApi pricing page on 2026-10-08) or taken
+    from adapter comments that quote the vendors' policies. Confirm them before relying on them.
+  * The deployment environment is not decided; AWS names are examples.
+  * Effort estimates are rough.
+
+
+APPENDIX A. SIMULATION SETUP AND RAW RESULTS
+--------------------------------------------
+
+Setup. The real FastAPI application ran in-process (httpx ASGI transport) over the test database
+tg_discovery_test, never the development database. The providers were replaced by a scripted
+collector that waits 0.3 s per city and returns 12 drafts per city and flow. Each request had 5
+cities. Runs were real background tasks (not inline) and the service token was enabled.
+Event-loop lag was sampled by a task that sleeps 10 ms repeatedly and records the overshoot. No
+vendor was called and nothing was spent. The script is not part of the repository; turning the
+scenarios into integration tests is recommended (section 10). Run date: 2026-10-10.
+
+Burst scenarios (5 cities per request)
+
+  Scenario                                     Sent  Acc.  Err  Runs  Peak  Loop lag max/p99
+  -------------------------------------------  ----  ----  ---  ----  ----  ----------------
+  A. same 10 countries x 3 admins (events)       30    28    2    10    10   159 / 21 ms
+  B. 30 distinct countries (events)              30    14   16    14    14   127 / 10 ms
+  C. 30 distinct countries, events + venues      60    35   25    35    26   133 / 43 ms
+
+  Acc. = accepted (HTTP 202). Err = refused with "could not find a free run code" (HTTP 500 in
+  production). Peak = most cities searched at the same moment. In A, 18 of the 28 accepted
+  requests were answered by an earlier run (deduplicated). All accepted runs finished
+  'succeeded' (scripted providers never fail).
+
+Overlapping runs (20 pairs, one run with cities City0+City1 and one with City0, same country)
+  40 runs: 36 succeeded, 4 failed with IntegrityError (duplicate key on the candidate
+  fingerprint).
+
+Candidate changed while the admin is looking at it
+  The admin saw version 1 with start time 21:00. A later run found 22:30. The candidate was at
+  version 1 with start time 22:30. Approving with version 1 returned HTTP 200 and the outbox row
+  carried 22:30.
+
+Two API processes on one database
+  A run was 'running'. Right after the second process started it was 'failed' ("the service
+  stopped while the run was in progress"). The same request sent to the second process was not
+  deduplicated and started a second run (2 city searches instead of 1). The first run then
+  finished by itself and set 'succeeded'.
+
+Merge and scoring time for one city (synthetic drafts, about 25% near-duplicates)
+
+  Venue drafts   Time          Event drafts   Time
+  ------------   ----------    ------------   ----------
+  398            38 ms         220            650 ms
+  1,250          241 ms        750            8,076 ms
+
+
+APPENDIX B. COST MODEL
+----------------------
+
+Real runs of 2026-10-08 (New York, one city each):
+  * Events run DSC-20261008-001: 0.2602 USD, 236 s, 24 searches (12 Exa + 12 SerpApi), 5 SerpApi
+    searches timed out; 176 drafts (Exa 117, SerpApi 59) -> 76 candidates and 58 expired.
+  * Venue run DSC-20261008-002: 0.2335 USD, 48 s, 25 searches (12 Exa + 12 Google Maps + 1
+    Overpass), none failed; 318 drafts (Maps 214, Exa 68, OSM 36) -> 167 candidates.
+
+Unit prices used by the adapters: SerpApi 0.010 USD per search (list price, verified
+2026-10-08); Exa about 0.007 USD per search plus content; Bedrock gpt-oss-120b 0.15 USD per
+million input tokens and 0.60 USD per million output tokens (settings defaults).
+
+Per morning, no overlap: events 150 x 0.26 = 39 USD; venues 150 x 0.23 = 35 USD; both = 74 USD.
+Per month, assuming events every day and venues once a week (168 h reuse window):
+39 x 30 + 35 x 4.3 = about 1,300 USD.
+
+Time to finish: at a median of about 14 s per SerpApi search, 1,800 searches need about 7
+searches at the same time to finish within one hour (3,600 searches: about 14), if the plan
+allows it.
+
+
+APPENDIX C. TERMS
+-----------------
+
+  API process      The program that receives HTTP requests (here FastAPI).
+  Worker           A separate program that takes jobs from a queue and does them. Not a machine:
+                   one machine can run several workers.
+  Queue            A list of jobs waiting to be done; here a table in Postgres.
+  Scheduler        The part that adds jobs to the queue at the right time.
+  Single flight    The same request is not run twice at once; the second caller gets the first run.
+  Reuse window     How long a finished run answers an identical request (TTL).
+  Event loop       The single thread that runs the API and all async work of a process; a
+                   long CPU-bound step on it blocks everything else in that process.
+  Health check     A periodic probe of an endpoint (/health) by which a platform decides whether
+                   to restart an instance. Liveness = "alive"; readiness = "ready for traffic".
+  OOM              Out of memory; the operating system or container runtime kills the process.
+  HTTP 429         "Too many requests": a vendor refusing calls because a limit was exceeded.
+  Quota            A cap on usage (calls, tokens, money) per period set by a vendor or account.
+  Idempotent       Repeating the same request has the same effect as sending it once.
+  Heartbeat        A timestamp a worker refreshes while it works, to show it is alive.
+  Reaper           A job that marks work as failed or re-queues it when its heartbeat is stale.
+  Jitter           A small random delay added to spread out jobs that would start together.
+  Catch-up         Running a missed schedule once after downtime.
+  p99              The latency below which 99% of requests complete.

@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tg-discovery POC Flow</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --surface: #ffffff; --ink: #1d1d1f; --muted: #5f6368; --line: #dcdcd8;
+    --event: #b4357a; --event-soft: #fbeef5; --venue: #1f6f8b; --venue-soft: #e9f4f8;
+    --shared: #5b4fc4; --shared-soft: #efedfb; --warn: #9a5b00; --warn-soft: #fff4e0;
+    --ok: #2e7d32; --ok-soft: #e8f5e9; --bad: #b3261e; --bad-soft: #fdecea; --code: #f0f0ec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141416; --surface: #1d1d20; --ink: #ececec; --muted: #a3a3a8; --line: #333338;
+      --event: #f07ab8; --event-soft: #3a1f2e; --venue: #6cc3e0; --venue-soft: #17303a;
+      --shared: #a79cf5; --shared-soft: #29254a; --warn: #f2b45a; --warn-soft: #3a2c14;
+      --ok: #7fcf84; --ok-soft: #1c3320; --bad: #f28b82; --bad-soft: #3b1e1c; --code: #2a2a2e;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141416; --surface: #1d1d20; --ink: #ececec; --muted: #a3a3a8; --line: #333338;
+    --event: #f07ab8; --event-soft: #3a1f2e; --venue: #6cc3e0; --venue-soft: #17303a;
+    --shared: #a79cf5; --shared-soft: #29254a; --warn: #f2b45a; --warn-soft: #3a2c14;
+    --ok: #7fcf84; --ok-soft: #1c3320; --bad: #f28b82; --bad-soft: #3b1e1c; --code: #2a2a2e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  h2 { font-size: 20px; margin: 40px 0 12px; padding-top: 8px; border-top: 1px solid var(--line); }
+  h3 { font-size: 16px; margin: 20px 0 8px; }
+  p { margin: 8px 0; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  code, pre { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 13px; }
+  code { background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code); padding: 12px; border-radius: 8px; overflow-x: auto; margin: 8px 0; }
+  nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 0; }
+  nav a {
+    color: var(--ink); text-decoration: none; border: 1px solid var(--line); background: var(--surface);
+    padding: 4px 10px; border-radius: 999px; font-size: 13px;
+  }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 12px 0; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .card b.big { display: block; font-size: 22px; }
+  .card span { color: var(--muted); font-size: 13px; }
+
+  /* flow diagram */
+  .flow { display: flex; flex-direction: column; align-items: stretch; gap: 0; margin: 12px 0; }
+  .step {
+    background: var(--surface); border: 1px solid var(--line); border-left: 5px solid var(--shared);
+    border-radius: 10px; padding: 10px 14px;
+  }
+  .step .t { font-weight: 600; }
+  .step .d { color: var(--muted); font-size: 13.5px; }
+  .step.event { border-left-color: var(--event); background: var(--event-soft); }
+  .step.venue { border-left-color: var(--venue); background: var(--venue-soft); }
+  .step.shared { border-left-color: var(--shared); background: var(--shared-soft); }
+  .step.end { border-left-color: var(--ok); background: var(--ok-soft); }
+  .arrow { text-align: center; color: var(--muted); font-size: 18px; line-height: 1; padding: 4px 0; }
+  .row { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .split { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
+  .drop { border-left-color: var(--bad) !important; background: var(--bad-soft) !important; }
+  .tag {
+    display: inline-block; font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 999px;
+    border: 1px solid currentColor; margin-left: 4px; vertical-align: 1px;
+  }
+  .tag.ev { color: var(--event); } .tag.ve { color: var(--venue); } .tag.free { color: var(--ok); }
+  .tag.paid { color: var(--warn); } .tag.g { color: var(--bad); }
+
+  table { width: 100%; border-collapse: collapse; background: var(--surface); font-size: 14px; }
+  .tw { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; margin: 10px 0; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12.5px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+  tr:last-child td { border-bottom: 0; }
+  td.n { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .note { background: var(--warn-soft); border-left: 4px solid var(--warn); padding: 10px 14px; border-radius: 8px; margin: 12px 0; }
+  .good { background: var(--ok-soft); border-left: 4px solid var(--ok); padding: 10px 14px; border-radius: 8px; margin: 12px 0; }
+  ul, ol { padding-left: 22px; margin: 8px 0; }
+  li { margin: 3px 0; }
+  .bar { height: 10px; border-radius: 5px; background: var(--event); }
+  .bars td:first-child { white-space: nowrap; }
+  footer { color: var(--muted); font-size: 13px; margin-top: 40px; border-top: 1px solid var(--line); padding-top: 12px; }
+  @media (max-width: 640px) {
+    .split { grid-template-columns: 1fr; }
+    h1 { font-size: 22px; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<h1>tg-discovery: flow POC hiện tại</h1>
+<p class="sub">Event và venue: dùng gì, kết quả thật ra sao, tốn bao nhiêu, dùng thế nào. Số liệu lấy từ 7 lượt chạy thật trong
+database dev (New York, Bangkok, Los Angeles), cập nhật ngày 13/10/2026.</p>
+<nav>
+  <a href="#tong-quan">1. Tổng quan</a>
+  <a href="#event">2. Flow event</a>
+  <a href="#venue">3. Flow venue</a>
+  <a href="#cham-diem">4. Chấm điểm</a>
+  <a href="#nguon">5. Nguồn và giá</a>
+  <a href="#ket-qua">6. Kết quả thật</a>
+  <a href="#chi-phi">7. Chi phí ước tính</a>
+  <a href="#cach-dung">8. Cách dùng</a>
+  <a href="#gioi-han">9. Giới hạn</a>
+</nav>
+
+<div class="cards">
+  <div class="card"><b class="big">~0,25 USD</b><span>1 thành phố, flow event (Exa + SerpApi + AI)</span></div>
+  <div class="card"><b class="big">~0,23 USD</b><span>1 thành phố, flow venue (Exa + Maps + OSM + AI)</span></div>
+  <div class="card"><b class="big">2 – 5 phút</b><span>event / 1 thành phố (venue: ~50 giây)</span></div>
+  <div class="card"><b class="big">175 + 167</b><span>event + venue đang chờ duyệt trong DB</span></div>
+</div>
+
+<!-- ================================================================== -->
+<h2 id="tong-quan">1. Tổng quan: một lần bấm Discovery</h2>
+<p>Admin (CMS hoặc Swagger) gửi quốc gia + danh sách thành phố. Service trả lời ngay một <code>run_id</code>, rồi tự chạy nền.
+Không có gì được đăng tự động: duyệt (approve) chỉ ghi một dòng vào <code>publish_outbox</code>, không ghi vào MySQL TravelGay.</p>
+
+<div class="flow">
+  <div class="step shared"><div class="t">① Admin gửi yêu cầu</div>
+    <div class="d"><code>POST /api/v1/events/runs</code> hoặc <code>/venues/runs</code> → trả <code>202</code> + <code>run_id</code> + mã dễ đọc
+    (<code>DSC-20261012-005</code>). Gửi trùng yêu cầu trong lúc đang chạy, hoặc trong 3 giờ (event) / 7 ngày (venue) sau khi xong → trả lại run cũ, không tốn tiền.</div></div>
+  <div class="arrow">▼</div>
+  <div class="step shared"><div class="t">② Xác định khu vực (locate)</div>
+    <div class="d">Có <code>lat</code>/<code>lng</code> → dùng luôn. Không có → hỏi Nominatim (miễn phí). Khu vực tìm = ô vuông bán kính 15 km quanh tâm thành phố.</div></div>
+  <div class="arrow">▼</div>
+  <div class="step shared"><div class="t">③ Thu thập (collect)</div>
+    <div class="d">12 câu hỏi tìm kiếm cố định cho mỗi flow, gửi song song (tối đa 8 cùng lúc) tới các nguồn. Event và venue dùng nguồn khác nhau: xem mục 2 và 3.</div></div>
+  <div class="arrow">▼</div>
+  <div class="step shared"><div class="t">④ AI đọc và trích xuất</div>
+    <div class="d">gpt-oss-120b (AWS Bedrock) đọc nội dung trang web trả về, rút ra event/venue theo khuôn cố định (schema Pydantic).
+    AI không có quyền ghi gì; chỉ lấy điều trang web nói, không đoán.</div></div>
+  <div class="arrow">▼</div>
+  <div class="step shared"><div class="t">⑤ Gộp trùng + chấm điểm (merge + score)</div>
+    <div class="d">Cùng một event/venue từ nhiều nguồn được gộp làm một. Chấm điểm 0 → 1, loại rác (hết hạn, không LGBTQ+, ngoài khu vực, điểm &lt; 0,35).</div></div>
+  <div class="arrow">▼</div>
+  <div class="step shared"><div class="t">⑥ Lưu vào Postgres</div>
+    <div class="d">Mới → thêm. Đã có → cập nhật nếu thay đổi. Mỗi lần thấy lại được ghi một "sighting".</div></div>
+  <div class="arrow">▼</div>
+  <div class="step end"><div class="t">⑦ Admin duyệt</div>
+    <div class="d">Xem danh sách → mở "review packet" → Approve (ghi <code>publish_outbox</code>) hoặc Reject.</div></div>
+</div>
+
+<!-- ================================================================== -->
+<h2 id="event">2. Flow EVENT <span class="tag ev">event</span></h2>
+
+<div class="flow">
+  <div class="step event"><div class="t">12 câu tìm kiếm (tiếng Anh, điền tên thành phố, tháng, năm)</div>
+    <div class="d">"gay events in {city} this month", "drag shows in {city}", "Pride {city} {year} events", "queer events {city} {month} {year}"…</div></div>
+  <div class="arrow">▼ mỗi câu gửi tới từng nguồn ▼</div>
+  <div class="split">
+    <div class="step event"><div class="t">Exa <span class="tag paid">trả phí</span></div>
+      <div class="d">12 lượt gọi. Mỗi lượt ≤ 10 trang, kèm nội dung (tối đa 8.000 ký tự/trang) + link ảnh của trang.
+      Có link gốc của event. Nhanh: ~2 giây/lượt.</div></div>
+    <div class="step event"><div class="t">SerpApi: khung "Events" của Google <span class="tag paid">trả phí</span> <span class="tag g">dữ liệu Google</span></div>
+      <div class="d">12 lượt gọi. Mỗi lượt trả tối đa 10 event: tên, ngày ("Oct 10", không có năm), giờ, địa chỉ.
+      <b>Không có link, giá, mô tả, ảnh.</b> Chậm: ~14 giây/lượt, có lượt 60+ giây. Tắt được bằng <code>PROVIDERS_ENABLED</code>.</div></div>
+  </div>
+  <div class="arrow">▼</div>
+  <div class="step shared"><div class="t">AI trích xuất (mỗi kết quả tìm kiếm = 1 lần gọi AI)</div>
+    <div class="d">Ra tên, ngày giờ (tự suy năm nếu trang không ghi, có cờ <code>date_inferred</code>), venue, địa chỉ, link vé / trang chính thức,
+    giá dạng chữ, mức độ LGBTQ+ kèm câu trích dẫn, mô tả ngắn. Đây là bước <b>chậm nhất</b>: trung bình ~65 giây/lần ở LA.</div></div>
+  <div class="arrow">▼</div>
+  <div class="step event"><div class="t">Lấy link ảnh (chỉ event tìm từ Exa)</div>
+    <div class="d">Ảnh chính Exa trả về + service tự đọc trang của event (tôn trọng robots.txt, qua SSRF guard, bỏ Facebook/Instagram/Google).
+    Lấy ảnh bài viết, bỏ logo/icon/banner/ảnh mờ/ảnh ở header-footer. Tối đa 20 URL/event. <b>Chỉ lưu URL, không tải ảnh về.</b>
+    Trang liệt kê nhiều event (lịch) thì không gán ảnh. Event từ Google không có ảnh.</div></div>
+  <div class="arrow">▼</div>
+  <div class="step shared"><div class="t">Gộp trùng → chấm điểm → loại → lưu</div>
+    <div class="d">Phần lớn bị loại vì <b>đã qua ngày</b> (expired). Phần còn lại vào hàng chờ duyệt.</div></div>
+</div>
+
+<h3>Một event sau khi xong có gì</h3>
+<div class="tw"><table>
+  <tr><th>Thường có</th><th>Hay trống</th></tr>
+  <tr>
+    <td>tên · ngày + giờ (các lần diễn ra) · tên venue + địa chỉ · link chính thức / vé / Facebook · giá dạng chữ + loại vé (free / paid) ·
+    mức LGBTQ+ + câu trích dẫn · mô tả (AI viết lại) · nguồn (URL) · ảnh (URL) · điểm + lý do cần xem kỹ</td>
+    <td>người tổ chức · toạ độ (lat/lng) của event · với event từ Google: chỉ còn tên, địa chỉ, link, id (các trường khác bị xoá theo quy định dữ liệu Google)</td>
+  </tr>
+</table></div>
+
+<!-- ================================================================== -->
+<h2 id="venue">3. Flow VENUE <span class="tag ve">venue</span></h2>
+
+<div class="flow">
+  <div class="step venue"><div class="t">Admin chọn loại venue (<code>venue_types</code>) → 3 câu tìm kiếm mỗi loại</div>
+    <div class="d">10 loại: Cafe, Restaurant, Adults, Bars, Dance Club, Saunas, Massage, Gyms, Attractions, Tours (bỏ trống = cả 10 = 30 câu).
+    Ví dụ Bars: "best bars in {city}", "gay bars in {city}", "cocktail bars and pubs in {city}".
+    <b>Không giới hạn venue LGBTQ+</b>; loại chỉ quyết định tìm câu gì, venue khác loại trả về vẫn được giữ.</div></div>
+  <div class="arrow">▼</div>
+  <div class="row">
+    <div class="step venue"><div class="t">Exa <span class="tag paid">trả phí</span></div>
+      <div class="d">1 lượt mỗi câu (3 mỗi loại). Trang web (blog, hướng dẫn, danh bạ) → AI đọc để rút venue.</div></div>
+    <div class="step venue"><div class="t">SerpApi Google Maps <span class="tag paid">trả phí</span> <span class="tag g">dữ liệu Google</span></div>
+      <div class="d">1 lượt mỗi câu, mỗi lượt ≤ 20 địa điểm có sẵn cấu trúc (tên, địa chỉ, toạ độ, place_id). Không cần AI. Nguồn ra nhiều nhất.</div></div>
+    <div class="step venue"><div class="t">OpenStreetMap (Overpass) <span class="tag free">miễn phí</span></div>
+      <div class="d">1 lượt/thành phố: vẫn chỉ lấy nơi được gắn tag LGBTQ+ (lấy hết mọi quán thì thành phố lớn ra hàng chục nghìn nơi không xếp hạng).
+      Có cả giờ mở cửa, website, điện thoại nếu cộng đồng đã nhập.</div></div>
+  </div>
+  <div class="arrow">▼</div>
+  <div class="step shared"><div class="t">AI trích xuất (chỉ cho trang từ Exa)</div>
+    <div class="d">Maps và OSM đã có cấu trúc nên đi thẳng vào bước gộp.</div></div>
+  <div class="arrow">▼</div>
+  <div class="step shared"><div class="t">Gộp trùng (cùng một nơi từ nhiều nguồn) → chấm điểm → lưu</div>
+    <div class="d">Venue thấy ở ≥ 2 nguồn được cộng điểm tin cậy. Chưa lấy ảnh venue.</div></div>
+</div>
+
+<h3>Một venue sau khi xong có gì</h3>
+<div class="tw"><table>
+  <tr><th>Thường có</th><th>Hay trống</th></tr>
+  <tr>
+    <td>tên · địa chỉ · toạ độ · loại (bar, club, sauna…) · website · id ngoài (Google place_id, OSM id) · trạng thái hoạt động ·
+    mức LGBTQ+ (+ trích dẫn nếu từ trang web) · nguồn · điểm</td>
+    <td>điện thoại, giờ mở cửa, mô tả, giá: từ Google Maps chỉ được giữ khi bật <code>KEEP_GOOGLE_DETAILS=true</code>
+    (mặc định tắt bỏ), còn lại chỉ có khi OSM hoặc trang web ghi · ảnh · popular times (chưa làm)</td>
+  </tr>
+</table></div>
+
+<!-- ================================================================== -->
+<h2 id="cham-diem">4. Chấm điểm và loại rác</h2>
+<div class="split">
+  <div>
+    <h3>Event (tổng 1,0)</h3>
+    <div class="tw"><table>
+      <tr><td>Ngày còn hiệu lực trong khoảng tìm</td><td class="n">0,25</td></tr>
+      <tr><td>Mức LGBTQ+ (có trích dẫn thì cao hơn)</td><td class="n">0,25</td></tr>
+      <tr><td>Đúng thành phố</td><td class="n">0,15</td></tr>
+      <tr><td>Kiểm chứng được (≥ 2 nguồn, có trang chính thức)</td><td class="n">0,15</td></tr>
+      <tr><td>Đủ thông tin</td><td class="n">0,10</td></tr>
+      <tr><td>Độ tin của nguồn</td><td class="n">0,10</td></tr>
+    </table></div>
+  </div>
+  <div>
+    <h3>Venue (tổng 1,0)</h3>
+    <div class="tw"><table>
+      <tr><td>Còn hoạt động</td><td class="n">0,30</td></tr>
+      <tr><td>Đúng thành phố</td><td class="n">0,20</td></tr>
+      <tr><td>Đủ thông tin</td><td class="n">0,20</td></tr>
+      <tr><td>Độ tin của nguồn</td><td class="n">0,15</td></tr>
+      <tr><td>Kiểm chứng được</td><td class="n">0,15</td></tr>
+    </table></div>
+    <p class="sub">Mức LGBTQ+ của venue vẫn được AI đánh giá (primary / friendly / unclear / no, kèm trích dẫn) để admin xem,
+    nhưng không tính điểm và không loại venue.</p>
+  </div>
+</div>
+<div class="flow">
+  <div class="row">
+    <div class="step drop"><div class="t">Loại ngay</div>
+      <div class="d">đóng cửa hẳn · huỷ · đã qua ngày · ngoài khu vực · điểm &lt; 0,35 · event không LGBTQ+ (venue thì không)</div></div>
+    <div class="step shared"><div class="t">Chờ duyệt (needs_review)</div>
+      <div class="d">điểm 0,35 – 0,75. Kèm danh sách "cần xem kỹ" (1 nguồn, không có trang chính thức, năm do suy đoán…)</div></div>
+    <div class="step end"><div class="t">Chờ duyệt + nhãn fast_approve</div>
+      <div class="d">điểm ≥ 0,75. Chỉ là nhãn "dễ duyệt", <b>không tự duyệt</b>.</div></div>
+  </div>
+</div>
+
+<!-- ================================================================== -->
+<h2 id="nguon">5. Các nguồn đang dùng và giá</h2>
+<div class="tw"><table>
+  <tr><th>Nguồn</th><th>Dùng cho</th><th>Giá</th><th>Gói miễn phí / giới hạn</th><th>Ghi chú</th></tr>
+  <tr><td><b>Exa</b> (search "auto")</td><td>event + venue</td>
+    <td>0,007 USD/lượt (≤ 10 kết quả) + ~0,001 USD/trang có nội dung. Giá thật đọc từ hoá đơn trong từng response.</td>
+    <td>trả theo lượt dùng</td><td>Giá đọc trên trang Exa ngày 08/10/2026.</td></tr>
+  <tr><td><b>SerpApi</b> Google events pack</td><td>event</td>
+    <td rowspan="2">Theo gói tháng: Starter 25 USD / 1.000 lượt · Developer 75 USD / 5.000 · Production 150 USD / 15.000.
+    Hệ thống ghi sổ 0,010 USD/lượt.</td>
+    <td rowspan="2">Free: 250 lượt/tháng, 50 lượt/giờ (đang dùng)</td>
+    <td rowspan="2">Dữ liệu Google: chỉ giữ tên, địa chỉ, toạ độ, link, id. Phải có trong <code>ACCEPTED_TERMS</code> mới chạy.
+    Vụ kiện Google v. SerpApi vẫn đang diễn ra.</td></tr>
+  <tr><td><b>SerpApi</b> Google Maps</td><td>venue</td></tr>
+  <tr><td><b>OpenStreetMap</b> Overpass</td><td>venue</td><td>0</td><td>server công cộng; dùng thương mại nên tự host</td>
+    <td>Dữ liệu ODbL: phải ghi nguồn OSM.</td></tr>
+  <tr><td><b>Nominatim</b></td><td>tìm toạ độ thành phố</td><td>0</td><td>1 lượt/giây</td>
+    <td>Mạng của bạn đang chặn (DNS) → gửi kèm <code>lat</code>/<code>lng</code>.</td></tr>
+  <tr><td><b>gpt-oss-120b</b> (AWS Bedrock)</td><td>AI đọc trang, cả 2 flow</td>
+    <td>0,15 USD / 1 triệu token vào · 0,60 USD / 1 triệu token ra</td><td>trả theo token</td>
+    <td>Giá chưa đối chiếu bảng giá Bedrock. AI duy nhất trong hệ thống.</td></tr>
+</table></div>
+
+<div class="note"><b>Chú ý về số tiền trong <code>cost_usd</code>:</b> hệ thống tính SerpApi là 0,010 USD/lượt (giá gói Production) để so sánh công bằng,
+nhưng bạn đang dùng gói Free nên thực tế chưa trả đồng nào cho SerpApi. Khi vượt 250 lượt/tháng thì phải mua gói tháng (xem mục 7).</div>
+
+<h3>Mỗi thành phố gọi bao nhiêu lượt</h3>
+<div class="tw"><table>
+  <tr><th>Flow</th><th>Exa</th><th>SerpApi</th><th>OSM</th><th>AI</th></tr>
+  <tr><td>Event (cấu hình hiện tại)</td><td class="n">12</td><td class="n">12 (events)</td><td class="n">–</td><td class="n">~15–21</td></tr>
+  <tr><td>Event, đã tắt <code>serpapi_events</code></td><td class="n">12</td><td class="n">0</td><td class="n">–</td><td class="n">ít hơn</td></tr>
+  <tr><td>Venue, mỗi loại chọn</td><td class="n">3</td><td class="n">3 (maps)</td><td class="n">1 / thành phố</td><td class="n">cho trang Exa</td></tr>
+  <tr><td>Venue, cả 10 loại</td><td class="n">30</td><td class="n">30 (maps)</td><td class="n">1</td><td class="n">cho trang Exa</td></tr>
+</table></div>
+
+<!-- ================================================================== -->
+<h2 id="ket-qua">6. Kết quả thật đã chạy</h2>
+<p>"Drafts" = số event/venue AI hoặc nguồn trả ra (trước khi gộp trùng). "Giữ lại" = số vào hàng chờ duyệt.</p>
+<div class="tw"><table>
+  <tr><th>Run</th><th>Flow</th><th>Thành phố</th><th>Thời gian</th><th>Chi phí (sổ sách)</th><th>Drafts theo nguồn</th><th>Bị loại</th><th>Giữ lại</th></tr>
+  <tr><td>DSC-20261008-001</td><td>event</td><td>New York</td><td class="n">236 s</td><td class="n">0,26 USD</td>
+    <td>Exa 117 · SerpApi 59</td><td>58 hết hạn</td><td class="n">76</td></tr>
+  <tr><td>DSC-20261008-002</td><td>venue</td><td>New York</td><td class="n">48 s</td><td class="n">0,23 USD</td>
+    <td>Maps 214 · Exa 68 · OSM 36</td><td>0</td><td class="n">167</td></tr>
+  <tr><td>DSC-20261012-001</td><td>event</td><td>Bangkok</td><td class="n">5 s</td><td class="n">0</td>
+    <td colspan="3">Thất bại: Nominatim bị chặn ở mạng của bạn (chưa tốn tiền)</td></tr>
+  <tr><td>DSC-20261012-002</td><td>event</td><td>Bangkok</td><td class="n">142 s</td><td class="n">0,25 USD</td>
+    <td>Exa 74 · SerpApi 27</td><td>26 hết hạn, 1 điểm thấp</td><td class="n">26</td></tr>
+  <tr><td>DSC-20261012-003</td><td>event</td><td>Bangkok</td><td class="n">179 s</td><td class="n">0,25 USD</td>
+    <td>Exa 73 · SerpApi 36</td><td>22 hết hạn</td><td class="n">27 (6 mới)</td></tr>
+  <tr><td>DSC-20261012-004</td><td>event</td><td>Bangkok</td><td class="n">114 s</td><td class="n">0,24 USD</td>
+    <td>Exa 81 · SerpApi 14</td><td>26 hết hạn</td><td class="n">22 (5 mới)</td></tr>
+  <tr><td>DSC-20261012-005</td><td>event</td><td>Los Angeles</td><td class="n">295 s</td><td class="n">0,26 USD</td>
+    <td>Exa 81 · SerpApi 70</td><td>44 hết hạn</td><td class="n">62</td></tr>
+</table></div>
+
+<h3>Ai tìm ra những gì được giữ lại</h3>
+<div class="tw"><table>
+  <tr><th>Run</th><th>Chỉ Exa</th><th>Chỉ SerpApi / Maps</th><th>Chỉ OSM</th><th>≥ 2 nguồn</th></tr>
+  <tr><td>Event New York</td><td class="n">29</td><td class="n">47</td><td class="n">–</td><td class="n">0</td></tr>
+  <tr><td>Event Los Angeles</td><td class="n">18</td><td class="n">41</td><td class="n">–</td><td class="n">3</td></tr>
+  <tr><td>Venue New York</td><td class="n">24</td><td class="n">91</td><td class="n">22</td><td class="n">30</td></tr>
+</table></div>
+<p>→ Với event, SerpApi ra nhiều nhưng các event đó <b>không có link, ảnh, giá</b> (chỉ tên + ngày + địa chỉ), nên admin phải tự kiểm.
+Event từ Exa ít hơn nhưng đầy đủ hơn. Với venue, Google Maps là nguồn chính; OSM bổ sung miễn phí.</p>
+
+<h3>Thời gian đi đâu (event Los Angeles, 295 giây)</h3>
+<div class="tw"><table class="bars">
+  <tr><th>Loại việc</th><th>Số lượt</th><th>Tổng (cộng dồn)</th><th>Lâu nhất</th><th style="width:40%"></th></tr>
+  <tr><td>AI trích xuất</td><td class="n">21</td><td class="n">1.366 s</td><td class="n">162 s</td><td><div class="bar" style="width:100%"></div></td></tr>
+  <tr><td>SerpApi events</td><td class="n">12</td><td class="n">134 s</td><td class="n">62 s</td><td><div class="bar" style="width:10%"></div></td></tr>
+  <tr><td>Đọc ảnh từ trang</td><td class="n">11</td><td class="n">57 s</td><td class="n">8 s</td><td><div class="bar" style="width:4%"></div></td></tr>
+  <tr><td>Exa</td><td class="n">12</td><td class="n">25 s</td><td class="n">3 s</td><td><div class="bar" style="width:2%"></div></td></tr>
+</table></div>
+<p>Các lượt chạy song song nên tổng cộng dồn lớn hơn 295 s. <b>AI là nút thắt</b>; tìm kiếm thì nhanh.</p>
+
+<h3>Ảnh event</h3>
+<p>Los Angeles: 16 / 62 event có link ảnh. Trong DB: 23 / 40 event tìm từ Exa có ảnh. Event chỉ từ Google: không có ảnh (theo quy định dữ liệu Google).</p>
+
+<h3>Đang chờ duyệt trong DB</h3>
+<p>175 event (39 có nhãn fast_approve, điểm 0,36 – 0,90) và 167 venue (44 fast_approve, điểm 0,48 – 0,98). Chưa duyệt cái nào.</p>
+
+<!-- ================================================================== -->
+<h2 id="chi-phi">7. Chi phí ước tính</h2>
+<h3>Mỗi thành phố, mỗi lần chạy</h3>
+<div class="tw"><table>
+  <tr><th>Lượt chạy</th><th>SerpApi (sổ sách)</th><th>Exa + AI</th><th>Tổng</th></tr>
+  <tr><td>Event, cấu hình hiện tại</td><td class="n">0,12</td><td class="n">~0,13</td><td class="n">~0,25 USD</td></tr>
+  <tr><td>Event, tắt <code>serpapi_events</code></td><td class="n">0</td><td class="n">~0,13 – 0,14</td><td class="n">~0,14 USD</td></tr>
+  <tr><td>Venue cũ (12 câu, đo thật ở New York)</td><td class="n">0,12</td><td class="n">~0,11</td><td class="n">~0,23 USD</td></tr>
+  <tr><td>Venue, mỗi loại chọn (3 câu, ước tính)</td><td class="n">0,03</td><td class="n">~0,03</td><td class="n">~0,06 USD</td></tr>
+  <tr><td>Venue, cả 10 loại (30 câu, ước tính)</td><td class="n">0,30</td><td class="n">~0,28</td><td class="n">~0,57 USD</td></tr>
+</table></div>
+<div class="note">Venue cả 10 loại dùng 30 lượt SerpApi mỗi thành phố: gói Free (250/tháng, 50/giờ) chỉ đủ khoảng 8 thành phố/tháng
+và 1 thành phố/giờ. <code>BUDGET_USD_PER_RUN</code> mặc định 1 USD chỉ đủ 1 thành phố cả 10 loại.</div>
+<p>Phần "Exa + AI" là phần còn lại của <code>cost_usd</code> thật sau khi trừ SerpApi; hệ thống chưa tách riêng từng nguồn.</p>
+
+<h3>Ví dụ một tháng: 50 thành phố, event mỗi tuần, venue mỗi tháng</h3>
+<div class="tw"><table>
+  <tr><th></th><th>Giữ SerpApi cho event</th><th>Tắt SerpApi cho event</th></tr>
+  <tr><td>Số lượt chạy</td><td colspan="2">200 lượt event (50 × 4) + 50 lượt venue</td></tr>
+  <tr><td>Lượt SerpApi / tháng</td><td class="n">2.400 + 600 = 3.000</td><td class="n">600</td></tr>
+  <tr><td>Gói SerpApi cần mua</td><td class="n">Developer 75 USD</td><td class="n">Starter 25 USD</td></tr>
+  <tr><td>Exa + AI</td><td class="n">~26 + ~6 = ~32 USD</td><td class="n">~28 + ~6 = ~34 USD</td></tr>
+  <tr><td><b>Tổng ước tính</b></td><td class="n"><b>~107 USD / tháng</b></td><td class="n"><b>~59 USD / tháng</b></td></tr>
+</table></div>
+<div class="note">Đây là ước tính từ 6 lượt chạy thật; mỗi thành phố khác nhau (thành phố lớn nhiều trang hơn → AI tốn hơn).
+Giá gpt-oss-120b chưa đối chiếu bảng giá Bedrock. <code>BUDGET_USD_PER_RUN</code> mặc định 1 USD: một lượt 5 thành phố event (~1,25 USD) sẽ bị dừng giữa chừng, cần tăng lên.</div>
+
+<!-- ================================================================== -->
+<h2 id="cach-dung">8. Cách dùng</h2>
+<h3>Chuẩn bị (một lần)</h3>
+<pre>docker compose up -d --wait db          # Postgres ở localhost:5433
+.\.venv\Scripts\python.exe -m alembic upgrade head</pre>
+<p>Trong <code>.env</code> cần có:</p>
+<div class="tw"><table>
+  <tr><th>Biến</th><th>Ý nghĩa</th></tr>
+  <tr><td><code>EXA_API_KEY</code>, <code>SERPAPI_API_KEY</code></td><td>key của Exa và SerpApi</td></tr>
+  <tr><td><code>AWS_BEDROCK_API_TOKEN</code>, <code>AWS_BEDROCK_OPENAI_URL</code></td><td>AI; URL phải kết thúc bằng <code>/v1</code></td></tr>
+  <tr><td><code>ACCEPTED_TERMS=serpapi_events,serpapi_maps</code></td><td>chủ dự án đồng ý điều khoản SerpApi (dữ liệu Google)</td></tr>
+  <tr><td><code>PROVIDERS_ENABLED=exa,serpapi_maps,osm_overpass</code></td><td>chọn nguồn; bỏ <code>serpapi_events</code> = event chỉ dùng Exa. Gõ đúng tên: sai tên sẽ bị bỏ qua mà không báo lỗi</td></tr>
+  <tr><td><code>NOMINATIM_USER_AGENT</code></td><td>tên app + email liên hệ thật (OSM và Nominatim bắt buộc)</td></tr>
+  <tr><td><code>BUDGET_USD_PER_RUN</code></td><td>trần tiền mỗi lượt chạy (mặc định 1,0)</td></tr>
+  <tr><td><code>FETCH_EVENT_PICTURES</code></td><td>bật/tắt việc đọc trang để lấy link ảnh event (mặc định bật)</td></tr>
+  <tr><td><code>KEEP_GOOGLE_DETAILS</code></td><td>giữ điện thoại, giờ mở cửa, mô tả, giá từ Google (mặc định tắt vì điều khoản Google; bật cho POC, hỏi pháp lý trước khi dùng thật)</td></tr>
+</table></div>
+
+<h3>Chạy server</h3>
+<pre>.\.venv\Scripts\python.exe -m uvicorn tg_discovery.main:create_app --factory --reload --reload-dir src --port 8000</pre>
+<p>Mở Swagger: <code>http://localhost:8000/docs</code>. Sửa <code>.env</code> thì phải tắt server và chạy lại.</p>
+
+<h3>Gọi API theo thứ tự</h3>
+<div class="flow">
+  <div class="step shared"><div class="t">1. Bắt đầu: <code>POST /api/v1/events/runs</code> (hoặc <code>/venues/runs</code>)</div>
+<pre>{
+  "country": "US",
+  "country_name": "United States",
+  "cities": [{"name": "Los Angeles", "timezone": "America/Los_Angeles",
+              "lat": 34.0522, "lng": -118.2437}],
+  "window_days": 60,
+  "force": false
+}</pre>
+    <div class="d"><code>timezone</code> phải là tên chuẩn IANA (vd. <code>Asia/Bangkok</code>, không phải <code>Thailand/Bangkok</code>). Tối đa 10 thành phố.
+    <code>force: true</code> để tìm lại khi chưa hết 3 giờ / 7 ngày.</div></div>
+  <div class="arrow">▼</div>
+  <div class="step shared"><div class="t">2. Theo dõi: <code>GET /api/v1/runs/{run_id}</code></div>
+    <div class="d">Gọi lại vài giây một lần tới khi <code>status</code> là <code>succeeded</code>, <code>partial</code> (một vài lượt gọi lỗi, phần còn lại vẫn có) hoặc <code>failed</code>.
+    Có <code>cost_usd</code>, <code>duration_s</code>, <code>stats.providers</code>, <code>stats.timing</code>.</div></div>
+  <div class="arrow">▼</div>
+  <div class="step shared"><div class="t">3. Xem danh sách: <code>GET /api/v1/runs/{run_id}/results</code></div>
+    <div class="d">Bảng duyệt, điểm cao trước. Hoặc <code>GET /api/v1/events/candidates?status=needs_review&amp;city=...</code> cho mọi lượt chạy.</div></div>
+  <div class="arrow">▼</div>
+  <div class="step shared"><div class="t">4. Mở chi tiết: <code>GET /api/v1/events/candidates/{id}?run_id=...</code></div>
+    <div class="d">Review packet: đầy đủ link, nguồn, ảnh, trích dẫn, điểm, "cần xem kỹ", vị trí "3 / 76".</div></div>
+  <div class="arrow">▼</div>
+  <div class="step end"><div class="t">5. Quyết định: <code>POST .../approve</code> hoặc <code>.../reject</code> kèm <code>version</code></div>
+    <div class="d"><code>409</code> = người khác đã quyết trước, tải lại. Approve chỉ ghi <code>publish_outbox</code>, không đăng gì.</div></div>
+</div>
+
+<!-- ================================================================== -->
+<h2 id="gioi-han">9. Giới hạn của POC hiện tại</h2>
+<div class="split">
+  <div>
+    <h3>Đã có</h3>
+    <div class="good"><ul>
+      <li>API thật + Swagger, chạy được cả event và venue</li>
+      <li>Gộp trùng, chấm điểm, loại rác, hàng chờ duyệt, approve/reject</li>
+      <li>Link ảnh event (Exa + đọc trang)</li>
+      <li>Trần tiền mỗi lượt, chống chạy trùng, log thời gian từng bước</li>
+      <li>Che key trong log; dữ liệu Google tự lọc</li>
+    </ul></div>
+  </div>
+  <div>
+    <h3>Chưa có / cần sửa</h3>
+    <div class="note"><ul>
+      <li>AI chậm (~65 giây/lần): 1 thành phố event mất 2 – 5 phút</li>
+      <li>Chưa có hàng đợi + worker: nhiều admin lên lịch cùng lúc dễ quá tải (xem <code>docs/server-load-risk-report.txt</code>)</li>
+      <li>Chưa đối chiếu với dữ liệu TravelGay đã có (dedupe), chưa kiểm trang chính thức (verify)</li>
+      <li>Chưa có ảnh venue, popular times, sửa trước khi duyệt, tiến độ realtime (SSE)</li>
+      <li>Chưa có publisher (outbox chưa được đẩy đi đâu)</li>
+      <li>Dữ liệu Google: cần ý kiến pháp lý trước khi dùng thật</li>
+    </ul></div>
+  </div>
+</div>
+
+<footer>tg-discovery POC · số liệu từ database dev ngày 13/10/2026 · giá Exa và SerpApi đọc trên trang nhà cung cấp ngày 08/10/2026,
+giá Bedrock chưa đối chiếu.</footer>
+</main>
+</body>
+</html>

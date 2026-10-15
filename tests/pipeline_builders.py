@@ -6,6 +6,7 @@ from tg_discovery.domain.enums import EventStatus, LgbtqLevel, OperatingStatus
 from tg_discovery.domain.geo import BoundingBox
 from tg_discovery.domain.models import (
     EventDraft,
+    EventImage,
     EventLinks,
     EventOccurrence,
     EventVenue,
@@ -43,7 +44,7 @@ def venue(
     status: OperatingStatus = OperatingStatus.UNKNOWN,
     external_ids: dict[str, str] | None = None,
     provider: str = "exa",
-    venue_type: str | None = "Bar",
+    venue_type: str | None = "Bars",
     phone: str | None = None,
     description: str | None = None,
 ) -> VenueDraft:
@@ -82,6 +83,7 @@ def event(
     price: str | None = None,
     description: str | None = None,
     dated: bool = True,
+    images: list[str] | None = None,
 ) -> EventDraft:
     day = start or TODAY + timedelta(days=days_ahead)
     return EventDraft(
@@ -94,6 +96,7 @@ def event(
         description=description,
         lgbtq=assessment(level, quote=quote) if level else None,
         status=status,
+        images=[EventImage(url=url, source_url="https://src.test/page") for url in images or []],
         sources=[source(provider=provider)],
     )
 

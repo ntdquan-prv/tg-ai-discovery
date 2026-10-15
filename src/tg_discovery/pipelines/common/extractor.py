@@ -7,6 +7,7 @@ country and time zone; those come from the context.
 """
 
 import uuid
+from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time
@@ -20,6 +21,7 @@ from rapidfuzz import fuzz
 from tg_discovery.domain.enums import Flow
 from tg_discovery.domain.models import (
     EventDraft,
+    EventImage,
     EventLinks,
     EventOccurrence,
     EventVenue,
@@ -27,8 +29,10 @@ from tg_discovery.domain.models import (
     LgbtqAssessment,
     SourceRef,
     VenueDraft,
+    union_images,
 )
-from tg_discovery.domain.urls import clean_url, url_identity
+from tg_discovery.domain.urls import clean_url, picture_key, url_identity
+from tg_discovery.domain.venue_types import venue_type_from_categories
 from tg_discovery.llm.bedrock_responses import FunctionCaller, LlmResult
 from tg_discovery.llm.schemas import (
     EventExtraction,
@@ -39,12 +43,13 @@ from tg_discovery.llm.schemas import (
     VenueExtraction,
     tool_schema,
 )
-from tg_discovery.providers.base import SearchHit
+from tg_discovery.providers.base import PageImage, SearchHit
 
 TOOL_NAME = "emit_candidates"
 DEFAULT_MAX_CHARS_PER_HIT = 6_000
 DEFAULT_MAX_TOTAL_CHARS = 48_000
 QUOTE_MATCH_SCORE = 90
+MAX_IMAGES_PER_PAGE = 12
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +94,7 @@ class _Page:
     title: str | None
     text: str
     published: date | None
+    images: tuple[PageImage, ...] = ()  # never shown to the model: the pictures are attached by code, afterwards
 
 
 @cache
@@ -184,7 +190,7 @@ class Extractor:
                 continue
             used += len(text)
             published = hit.published_at.date() if hit.published_at else None
-            pages.append(_Page(url=hit.url, title=hit.title, text=text, published=published))
+            pages.append(_Page(url=hit.url, title=hit.title, text=text, published=published, images=_page_images(hit)))
         return pages, dropped
 
     def _prompt(self, pages: Sequence[_Page], ctx: ExtractionContext) -> str:
@@ -247,7 +253,41 @@ class Extractor:
                 stats.items_invalid += 1
             else:
                 drafts.append(draft)
-        return drafts
+        return _with_images(drafts, pages)
+
+
+def _page_images(hit: SearchHit) -> tuple[PageImage, ...]:
+    """The pictures of a result: the provider's main one first, then the rest, without repeats."""
+    candidates = [PageImage(url=hit.image), *hit.images] if hit.image else list(hit.images)
+    seen: set[str] = set()
+    kept: list[PageImage] = []
+    for image in candidates:
+        key = picture_key(image.url)
+        if key not in seen and len(kept) < MAX_IMAGES_PER_PAGE:
+            seen.add(key)
+            kept.append(image)
+    return tuple(kept)
+
+
+def _with_images(drafts: list[EventDraft], pages: Sequence[_Page]) -> list[EventDraft]:
+    """Give each event the pictures of the pages that are about it alone.
+
+    A page that names several events (a calendar, a listicle) says nothing about whose picture is whose, and its main
+    picture is usually the site's banner, so such a page adds no picture to any event.
+    """
+    cited = Counter(source.url for draft in drafts for source in draft.sources)
+    by_url = {page.url: page for page in pages}
+    result: list[EventDraft] = []
+    for draft in drafts:
+        found = [
+            EventImage(url=image.url, source_url=page.url, alt=image.alt)
+            for source in draft.sources
+            if (page := by_url.get(source.url)) is not None and cited[page.url] == 1
+            for image in page.images
+        ]
+        images = union_images(found)
+        result.append(draft.model_copy(update={"images": images}) if images else draft)
+    return result
 
 
 def _items(arguments: dict[str, object], key: str) -> list[object]:
@@ -326,7 +366,7 @@ def _venue_draft(
     try:
         return VenueDraft(
             name=item.name,
-            venue_type=item.venue_type,
+            venue_type=venue_type_from_categories([item.venue_type]) if item.venue_type else None,
             address=item.address,
             city=item.city,
             country=ctx.country,

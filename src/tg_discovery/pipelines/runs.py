@@ -4,9 +4,10 @@ A run walks its cities one at a time: place the city, ask the providers, merge a
 candidates, report progress. A city that cannot be placed or a provider that fails makes the run ``partial``, not lost.
 """
 
+import time
 from collections import Counter
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
+from collections.abc import Callable, Generator
+from contextlib import AbstractAsyncContextManager, contextmanager
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -49,6 +50,9 @@ async def execute_run(
         run = await repository.mark_started(session, run_id, clock())
     if run is None:
         return
+    began = time.perf_counter()
+    wanted = RunFilter.model_validate(run.filter)
+    log.info("run started", run=run.code, flow=run.flow, country=wanted.country, cities=[c.name for c in wanted.cities])
     status, stats, error, cost = "failed", {}, None, 0.0
     try:
         async with open_environment() as environment:
@@ -61,7 +65,24 @@ async def execute_run(
         await repository.finish_run(
             session, run_id, status=status, stats=stats, cost_usd=cost, error=error, now=clock()
         )
-    log.info("run finished", run=run.code, status=status, cost_usd=round(cost, 4))
+    log.info(
+        "run finished",
+        run=run.code,
+        status=status,
+        seconds=round(time.perf_counter() - began, 1),
+        cost_usd=round(cost, 4),
+        **({"error": error} if error else {}),
+    )
+
+
+@contextmanager
+def _lap(laps: dict[str, float], stage: str) -> Generator[None]:
+    """Time one stage of a city: afterwards ``laps[f"{stage}_s"]`` holds the seconds it took."""
+    started = time.perf_counter()
+    try:
+        yield
+    finally:
+        laps[f"{stage}_s"] = round(time.perf_counter() - started, 1)
 
 
 async def _locate(geocoder: Geocoder, request: CityRequest, country: str, problems: list[str]) -> BoundingBox | None:
@@ -92,10 +113,16 @@ async def _discover(
     by_provider: Counter[str] = Counter()
     errors: Counter[str] = Counter()
     problems: list[str] = []
+    timings: list[Json] = []
+    started = time.perf_counter()
     done = 0
     for request in run_filter.cities:
-        area = await _locate(environment.geocoder, request, run_filter.country, problems)
+        city_started = time.perf_counter()
+        laps: dict[str, float] = {}
+        with _lap(laps, "locate"):
+            area = await _locate(environment.geocoder, request, run_filter.country, problems)
         if area is None:
+            log.warning("city skipped", run=run.code, city=request.name, why=problems[-1])
             continue
         city = CityTarget(
             name=request.name,
@@ -105,14 +132,23 @@ async def _discover(
             area=area,
             tg_city_id=request.tg_city_id,
         )
-        batch = await environment.collector.collect(flow, city, window_days=run_filter.window_days, today=today)
-        prepared = (
-            prepare_venues(batch)
-            if flow is Flow.VENUE
-            else prepare_events(batch, today=today, window_days=run_filter.window_days)
-        )
-        async with session_factory() as session:
-            saved = await repository.save_candidates(session, run.id, flow, city, prepared.candidates, clock())
+        with _lap(laps, "collect"):
+            batch = await environment.collector.collect(
+                flow,
+                city,
+                window_days=run_filter.window_days,
+                today=today,
+                venue_types=run_filter.chosen_venue_types(),
+            )
+        with _lap(laps, "merge"):
+            prepared = (
+                prepare_venues(batch)
+                if flow is Flow.VENUE
+                else prepare_events(batch, today=today, window_days=run_filter.window_days)
+            )
+        with _lap(laps, "save"):
+            async with session_factory() as session:
+                saved = await repository.save_candidates(session, run.id, flow, city, prepared.candidates, clock())
         outcomes.update(saved.outcomes)
         rejected.update(prepared.rejected)
         calls += batch.stats.calls
@@ -120,6 +156,27 @@ async def _discover(
         stopped = stopped or batch.stats.stopped_by_budget
         by_provider.update(batch.stats.drafts_by_provider)
         errors.update(batch.stats.errors)
+        timing: Json = {
+            "city": request.name,
+            "seconds": round(time.perf_counter() - city_started, 1),
+            **laps,
+            "busy": batch.stats.busy(),
+        }
+        timings.append(timing)
+        log.info(
+            "city done",
+            run=run.code,
+            city=request.name,
+            seconds=timing["seconds"],
+            **laps,
+            drafts=sum(batch.stats.drafts_by_provider.values()),
+            candidates=len(prepared.candidates),
+            rejected=sum(prepared.rejected.values()),
+            calls_ok=batch.stats.calls,
+            calls_failed=batch.stats.failed_calls,
+            stopped_by_budget=batch.stats.stopped_by_budget,
+            busy=timing["busy"],
+        )
         done += 1
         async with session_factory() as session:
             progress: Json = {"stage": "searching", "cities_done": done, "cities_total": len(run_filter.cities)}
@@ -139,6 +196,7 @@ async def _discover(
             "errors": top_errors,
             "problems": problems,
             "stopped_by_budget": stopped,
+            "timing": {"total_s": round(time.perf_counter() - started, 1), "cities": timings},
         }
     )
     if done == 0:

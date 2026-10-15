@@ -1,8 +1,12 @@
 """Scores and triage for merged drafts (guide sections 4 and 5): a number, a decision and the reasons for doubt.
 
-A candidate is scored 0 to 1 from weighted parts. Hard gates reject outright (not LGBTQ+, closed for good, outside the
-area, cancelled, already over). Below ``REJECT_BELOW`` a candidate is dropped as junk; everything else goes to a human,
-and at ``FAST_APPROVE_FROM`` or more it is marked as an easy approve (a label, never an automatic approval).
+A candidate is scored 0 to 1 from weighted parts. Hard gates reject outright (closed for good, outside the area,
+cancelled, already over, and for events not LGBTQ+). Below ``REJECT_BELOW`` a candidate is dropped as junk; everything
+else goes to a human, and at ``FAST_APPROVE_FROM`` or more it is marked as an easy approve (a label, never an automatic
+approval).
+
+Venues are not limited to LGBTQ+ places (the owner's call on 2026-10-13): their LGBTQ+ level is assessed and shown to
+the reviewer, but it neither scores nor rejects a venue. Events still are LGBTQ+ events.
 """
 
 from collections.abc import Sequence
@@ -19,12 +23,11 @@ FAST_APPROVE_FROM = 0.75
 MARGIN_RATIO = 0.1  # a venue just outside the search box is still in the city
 
 VENUE_WEIGHTS = {
-    "lgbtq_relevance": 0.30,
-    "existence": 0.20,
-    "location_match": 0.15,
-    "completeness": 0.15,
-    "source_trust": 0.10,
-    "verifiability": 0.10,
+    "existence": 0.30,
+    "location_match": 0.20,
+    "completeness": 0.20,
+    "source_trust": 0.15,
+    "verifiability": 0.15,
 }
 EVENT_WEIGHTS = {
     "time_validity": 0.25,
@@ -113,7 +116,6 @@ def score_venue(draft: VenueDraft, providers: Sequence[str], *, area: BoundingBo
     }[status]
     location, outside = _place(draft.lat, draft.lng, area, known_text=bool(draft.address))
     parts = {
-        "lgbtq_relevance": _lgbtq(draft.lgbtq),
         "existence": existence,
         "location_match": location,
         "completeness": _completeness(draft.missing_fields),
@@ -124,8 +126,6 @@ def score_venue(draft: VenueDraft, providers: Sequence[str], *, area: BoundingBo
         concerns.append("It is not known whether the venue is still open.")
     if status is OperatingStatus.TEMPORARILY_CLOSED:
         concerns.append("The venue is reported as temporarily closed.")
-    if draft.lgbtq is None or not draft.lgbtq.evidence:
-        concerns.append("Nothing quoted from a page supports the LGBTQ+ level.")
     if len(set(providers)) < 2:
         concerns.append("Only one source lists it.")
     if not draft.website:
@@ -137,8 +137,6 @@ def score_venue(draft: VenueDraft, providers: Sequence[str], *, area: BoundingBo
 
 
 def _venue_gate(draft: VenueDraft, *, outside: bool) -> str | None:
-    if draft.lgbtq is not None and draft.lgbtq.level is LgbtqLevel.NO:
-        return "not_lgbtq"
     if draft.operating_status is OperatingStatus.PERMANENTLY_CLOSED:
         return "closed"
     return "outside_area" if outside else None

@@ -41,6 +41,7 @@
       "hours": "Open ⋅ Closes 2 AM",
       "operating_hours": {"monday": "8 PM–2 AM", "tuesday": "8 PM–2 AM"},
       "phone": "+66 2 000 0001",
+      "description": "Small gay bar with drag shows on Fridays.",
       "website": "https://bar-example.example/?utm_source=google&fbclid=1#top",
       "thumbnail": "https://lh5.googleusercontent.com/p/AF1Qip-example-thumb=w80-h106-k-no",
       "serpapi_thumbnail": "https://serpapi.com/searches/fixture-maps-0001/images/thumb-example.webp",

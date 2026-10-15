@@ -19,6 +19,21 @@ class LgbtqLevel(StrEnum):
     NO = "no"
 
 
+class VenueType(StrEnum):
+    """TravelGay's venue types: what a venue run searches for, and the label a venue gets when its type is clear."""
+
+    CAFE = "Cafe"
+    RESTAURANT = "Restaurant"
+    ADULTS = "Adults"
+    BARS = "Bars"
+    DANCE_CLUB = "Dance Club"
+    SAUNAS = "Saunas"
+    MASSAGE = "Massage"
+    GYMS = "Gyms"
+    ATTRACTIONS = "Attractions"
+    TOURS = "Tours"
+
+
 class OperatingStatus(StrEnum):
     OPEN = "open"
     TEMPORARILY_CLOSED = "temporarily_closed"

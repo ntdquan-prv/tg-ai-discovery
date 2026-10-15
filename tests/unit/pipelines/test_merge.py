@@ -3,7 +3,7 @@ from datetime import timedelta
 from tests.pipeline_builders import CITY, TODAY, batch, event, venue
 from tg_discovery.domain.enums import EventStatus, LgbtqLevel, OperatingStatus
 from tg_discovery.domain.fingerprint import event_fingerprint
-from tg_discovery.domain.models import EventDraft
+from tg_discovery.domain.models import MAX_EVENT_IMAGES, EventDraft
 from tg_discovery.pipelines.common.merge import (
     event_content_hash,
     group_events,
@@ -60,7 +60,12 @@ def test_a_merged_venue_keeps_the_fullest_draft_and_fills_its_gaps() -> None:
             lng=None,
         ),
     )
-    maps = ("serpapi_maps", venue("Stonewall Inn", address="53 Christopher St", website=None, lat=10.01, lng=20.01))
+    maps = (
+        "serpapi_maps",
+        venue("Stonewall Inn", address="53 Christopher St", website=None, lat=10.01, lng=20.01).model_copy(
+            update={"price_text": "$$"}
+        ),
+    )
     exa = ("exa", venue("Stonewall Inn", website=None, address=None, lat=None, lng=None, description="A historic bar."))
 
     merged = merge_venue([exa, osm, maps])
@@ -68,9 +73,10 @@ def test_a_merged_venue_keeps_the_fullest_draft_and_fills_its_gaps() -> None:
     assert merged.address == "53 Christopher St"
     assert merged.website == "https://stonewall.example"
     assert merged.phone == "+1 555"
-    assert merged.venue_type == "Bar"
+    assert merged.venue_type == "Bars"
     assert (merged.lat, merged.lng) == (10.01, 20.01)
     assert merged.description == "A historic bar."
+    assert merged.price_text == "$$"
     assert len(merged.sources) == 1  # the builders give every draft the same page
 
 
@@ -125,6 +131,38 @@ def test_a_merged_event_gathers_every_date_and_fills_the_links() -> None:
     assert (merged.organizer, merged.price_text) == ("Brunch Co", "Free")
 
 
+def test_a_merged_event_keeps_the_pictures_of_every_draft_once() -> None:
+    first = ("exa", event("Drag Brunch", images=["https://cdn.example/a.jpg", "https://cdn.example/b.jpg"]))
+    second = (
+        "exa",
+        event("Drag Brunch", images=["https://cdn.example/b.jpg?utm_source=x", "https://cdn.example/c.jpg"]),
+    )
+
+    merged = merge_event([first, second])
+
+    assert sorted(image.url for image in merged.images) == [
+        "https://cdn.example/a.jpg",
+        "https://cdn.example/b.jpg",
+        "https://cdn.example/c.jpg",
+    ]
+
+
+def test_a_merged_event_keeps_at_most_twenty_pictures() -> None:
+    drafts = [
+        ("exa", event("Drag Brunch", images=[f"https://cdn.example/{draft}-{number}.jpg" for number in range(15)]))
+        for draft in range(3)
+    ]
+
+    assert len(merge_event(drafts).images) == MAX_EVENT_IMAGES
+
+
+def test_changed_pictures_alone_do_not_count_as_a_change() -> None:
+    plain = event("Drag Brunch")
+    pictured = event("Drag Brunch", images=["https://cdn.example/a.jpg"])
+
+    assert event_content_hash(plain) == event_content_hash(pictured)
+
+
 def test_one_source_saying_cancelled_cancels_the_event() -> None:
     merged = merge_event([("exa", event(status=EventStatus.CANCELLED)), ("serpapi_events", event())])
 
@@ -145,14 +183,18 @@ def test_preparing_a_city_merges_scores_and_drops_the_junk() -> None:
         ("serpapi_maps", venue("Heaven", website=None, external_ids={"google_place_id": "g1"})),
         ("osm_overpass", venue("Heaven", external_ids={"osm": "node/1"}, lat=10.0, lng=20.0)),
         ("exa", venue("Dead Club", status=OperatingStatus.PERMANENTLY_CLOSED, website="https://dead.example")),
-        ("exa", venue("Not Gay", level=LgbtqLevel.NO, website="https://nope.example", lat=10.05, lng=20.05)),
+        ("exa", venue("Corner Cafe", level=LgbtqLevel.NO, website="https://cafe.example", lat=10.05, lng=20.05)),
     ]
 
     prepared = prepare_venues(batch(venues=entries))
 
-    assert [item.draft.name for item in prepared.candidates] == ["Heaven"]
+    # Venues are not limited to LGBTQ+ places: one that is not LGBTQ+ is kept, with its level as a label.
+    assert [item.draft.name for item in prepared.candidates] == ["Heaven", "Corner Cafe"]
     assert prepared.candidates[0].providers == ["osm_overpass", "serpapi_maps"]
-    assert dict(prepared.rejected) == {"closed": 1, "not_lgbtq": 1}
+    corner = prepared.candidates[1].draft
+    assert corner.lgbtq is not None
+    assert corner.lgbtq.level is LgbtqLevel.NO
+    assert dict(prepared.rejected) == {"closed": 1}
 
 
 def test_preparing_events_drops_the_ones_already_over() -> None:

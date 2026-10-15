@@ -1,9 +1,11 @@
 """Draft models: what a provider or the extractor believes about one venue or one event.
 
 Drafts hold derived facts only. They never carry raw provider payloads, and for data that comes from Google nothing but
-facts and a ``place_id``: ``scrub_google_derived`` removes the rest before a draft is stored.
+facts and a ``place_id``: ``scrub_google_derived`` removes the rest before a draft is stored (the owner's
+``KEEP_GOOGLE_DETAILS`` switch keeps the phone, hours, description and price as well).
 """
 
+from collections.abc import Iterable
 from datetime import date, datetime, time
 from typing import Self, overload
 
@@ -17,9 +19,12 @@ from tg_discovery.domain.enums import (
     OperatingStatus,
     RecurringType,
 )
+from tg_discovery.domain.urls import picture_key
 
 QUOTE_MAX_CHARS = 300
 DESCRIPTION_MAX_CHARS = 600
+ALT_MAX_CHARS = 200
+MAX_EVENT_IMAGES = 20  # picture URLs kept for one event, however many pages and sources it was found on
 
 # Fields a venue needs to be usable without further lookups, and the optional ones that make it richer.
 VENUE_REQUIRED_FIELDS = ("name", "address", "coordinates", "website")
@@ -88,6 +93,7 @@ class VenueDraft(_Described):
     phone: str | None = None
     socials: dict[str, str] = Field(default_factory=dict[str, str])
     opening_hours: str | None = None
+    price_text: str | None = None  # as the source writes it: "$$", "$10-20"
     lgbtq: LgbtqAssessment | None = None
     operating_status: OperatingStatus = OperatingStatus.UNKNOWN
     external_ids: dict[str, str] = Field(default_factory=dict[str, str])
@@ -157,6 +163,35 @@ class EventLinks(_Model):
     instagram: str | None = None
 
 
+class EventImage(_Model):
+    """The address of a picture of an event. Only the URL is kept: the image itself is never downloaded or stored."""
+
+    url: str
+    source_url: str | None = None  # the page the picture was found on
+    alt: str | None = None
+
+    @field_validator("alt")
+    @classmethod
+    def _cap_alt(cls, value: str | None) -> str | None:
+        return value[:ALT_MAX_CHARS] if value else value
+
+
+def union_images(*groups: Iterable[EventImage]) -> list[EventImage]:
+    """Every picture of the groups once, at most ``MAX_EVENT_IMAGES``: the first spelling of a picture is the one kept.
+
+    Two addresses that are only different sizes or encodings of one picture count as one (``picture_key``).
+    """
+    seen: set[str] = set()
+    kept: list[EventImage] = []
+    for group in groups:
+        for image in group:
+            key = picture_key(image.url)
+            if key not in seen and len(kept) < MAX_EVENT_IMAGES:
+                seen.add(key)
+                kept.append(image)
+    return kept
+
+
 class EventDraft(_Described):
     name: str
     event_type: EventType = EventType.EVENT
@@ -169,6 +204,7 @@ class EventDraft(_Described):
     price_text: str | None = None
     lgbtq: LgbtqAssessment | None = None
     status: EventStatus = EventStatus.UNKNOWN
+    images: list[EventImage] = Field(default_factory=list[EventImage])
     sources: list[SourceRef] = Field(default_factory=list[SourceRef])
 
     @property
@@ -208,25 +244,21 @@ def _without_quotes(assessment: LgbtqAssessment | None) -> LgbtqAssessment | Non
 
 
 @overload
-def scrub_google_derived(draft: VenueDraft) -> VenueDraft: ...
+def scrub_google_derived(draft: VenueDraft, *, keep_details: bool = False) -> VenueDraft: ...
 @overload
-def scrub_google_derived(draft: EventDraft) -> EventDraft: ...
-def scrub_google_derived(draft: VenueDraft | EventDraft) -> VenueDraft | EventDraft:
+def scrub_google_derived(draft: EventDraft, *, keep_details: bool = False) -> EventDraft: ...
+def scrub_google_derived(draft: VenueDraft | EventDraft, *, keep_details: bool = False) -> VenueDraft | EventDraft:
     """Keep only what may be stored from Google-derived data: names, addresses, coordinates, URLs and ids.
 
-    Hours, phone numbers, descriptions, prices and evidence quotes can all originate in Google reviews or listings, so
-    they are dropped; the LGBTQ+ level and the operating status stay because they are derived facts.
+    Hours, phone numbers, descriptions, prices, pictures and evidence quotes can all originate in Google reviews or
+    listings, so they are dropped; the LGBTQ+ level and the operating status stay because they are derived facts.
+    ``keep_details`` (the owner's ``KEEP_GOOGLE_DETAILS`` switch) keeps the phone, hours, description and price too.
     """
+    details: dict[str, object] = {}
     if isinstance(draft, VenueDraft):
-        return draft.model_copy(
-            update={
-                "phone": None,
-                "socials": {},
-                "opening_hours": None,
-                "description": None,
-                "lgbtq": _without_quotes(draft.lgbtq),
-            }
-        )
-    return draft.model_copy(
-        update={"description": None, "price_text": None, "organizer": None, "lgbtq": _without_quotes(draft.lgbtq)}
-    )
+        if not keep_details:
+            details = {"phone": None, "opening_hours": None, "description": None, "price_text": None}
+        return draft.model_copy(update={**details, "socials": {}, "lgbtq": _without_quotes(draft.lgbtq)})
+    if not keep_details:
+        details = {"description": None, "price_text": None}
+    return draft.model_copy(update={**details, "organizer": None, "images": [], "lgbtq": _without_quotes(draft.lgbtq)})

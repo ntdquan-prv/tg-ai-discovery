@@ -22,6 +22,7 @@ from tg_discovery.domain.models import (
     LgbtqAssessment,
     SourceRef,
     VenueDraft,
+    union_images,
 )
 from tg_discovery.domain.urls import website_key
 
@@ -167,6 +168,7 @@ def merge_venue(entries: Sequence[Entry]) -> VenueDraft:
             "website": _first(draft.website for draft in drafts),
             "phone": _first(draft.phone for draft in drafts),
             "opening_hours": _first(draft.opening_hours for draft in drafts),
+            "price_text": _first(draft.price_text for draft in drafts),
             "description": _first(draft.description for draft in drafts),
             "socials": socials,
             "external_ids": external_ids,
@@ -233,6 +235,7 @@ def merge_event(entries: Sequence[EventEntry]) -> EventDraft:
             "description": _first(draft.description for draft in drafts),
             "lgbtq": _merge_lgbtq(draft.lgbtq for draft in drafts),
             "status": EventStatus.CANCELLED if cancelled else (known_status or EventStatus.UNKNOWN),
+            "images": union_images(*(draft.images for draft in drafts)),  # the most complete draft's pictures first
             "sources": _sources(drafts),
         }
     )

@@ -10,7 +10,14 @@ from tests.support import HttpFactory, load_fixture
 from tg_discovery.domain.enums import Flow
 from tg_discovery.pipelines.common.budget import Budget
 from tg_discovery.providers.base import BudgetExceededError, ProviderError, SearchProvider, SearchQuery
-from tg_discovery.providers.search.exa import MAX_CONTENT_CHARS, PRICE, URL, ExaSearch, ExaSearchType
+from tg_discovery.providers.search.exa import (
+    MAX_CONTENT_CHARS,
+    MAX_IMAGE_LINKS,
+    PRICE,
+    URL,
+    ExaSearch,
+    ExaSearchType,
+)
 
 QUERY = SearchQuery(text="gay bars Berlin", flow=Flow.VENUE, country="DE", city="Berlin", language="de", max_results=10)
 WORST_CASE_USD = 0.017  # auto, 10 results: 0.007 base + 10 pages of text at 0.001
@@ -55,6 +62,96 @@ async def test_the_country_is_left_out_when_the_query_has_none(make_http: HttpFa
     await _provider(make_http).search(QUERY.model_copy(update={"country": ""}))
 
     assert "userLocation" not in _sent(route)
+
+
+EVENT_QUERY = QUERY.model_copy(update={"text": "drag shows in Berlin", "flow": Flow.EVENT})
+
+
+@respx.mock
+async def test_event_searches_also_ask_for_the_pictures_of_each_page(make_http: HttpFactory) -> None:
+    route = respx.post(URL).mock(return_value=_ok())
+
+    await _provider(make_http).search(EVENT_QUERY)
+
+    assert _sent(route)["contents"] == {
+        "text": {"maxCharacters": MAX_CONTENT_CHARS},
+        "extras": {"richImageLinks": MAX_IMAGE_LINKS},
+    }
+
+
+@respx.mock
+async def test_venue_searches_do_not_ask_for_pictures(make_http: HttpFactory) -> None:
+    route = respx.post(URL).mock(return_value=_ok())
+
+    await _provider(make_http).search(QUERY)
+
+    assert "extras" not in cast(Payload, _sent(route)["contents"])
+
+
+@respx.mock
+async def test_a_hit_carries_the_main_picture_and_the_pictures_of_the_page(make_http: HttpFactory) -> None:
+    item: Payload = {
+        "url": "https://events.example/e/drag-night",
+        "text": "Drag Night, Friday 21:00.",
+        "image": "https://cdn.example/posters/drag-night.jpg",
+        "favicon": "https://events.example/favicon.ico",
+        "extras": {
+            "richImageLinks": [
+                {"url": "https://cdn.example/posters/drag-night.jpg", "alt": "Drag Night poster"},
+                {"url": "https://cdn.example/gallery/1.jpg", "alt": "  "},
+                {"url": "https://cdn.example/site/logo.png", "alt": "Logo"},  # not a photo
+                {"url": "data:image/png;base64,AAAA"},  # not an address
+                {"url": "https://cdn.example/gallery/1.jpg", "alt": "again"},  # a repeat
+                {"alt": "no url"},
+                "oops",
+            ]
+        },
+    }
+    respx.post(URL).mock(return_value=httpx.Response(200, json={"results": [item]}))
+
+    result = await _provider(make_http).search(EVENT_QUERY)
+
+    (hit,) = result.hits
+    assert hit.image == "https://cdn.example/posters/drag-night.jpg"
+    assert [(image.url, image.alt) for image in hit.images] == [
+        ("https://cdn.example/posters/drag-night.jpg", "Drag Night poster"),
+        ("https://cdn.example/gallery/1.jpg", None),
+    ]
+
+
+@respx.mock
+async def test_plain_image_links_are_used_when_there_are_no_rich_ones(make_http: HttpFactory) -> None:
+    item: Payload = {
+        "url": "https://events.example/e/1",
+        "extras": {"imageLinks": ["https://cdn.example/a.jpg", "", 7, "https://cdn.example/b.jpg"]},
+    }
+    respx.post(URL).mock(return_value=httpx.Response(200, json={"results": [item]}))
+
+    result = await _provider(make_http).search(EVENT_QUERY)
+
+    assert [image.url for image in result.hits[0].images] == ["https://cdn.example/a.jpg", "https://cdn.example/b.jpg"]
+
+
+@respx.mock
+async def test_the_pictures_of_a_page_are_capped(make_http: HttpFactory) -> None:
+    links = [f"https://cdn.example/{number}.jpg" for number in range(40)]
+    item: Payload = {"url": "https://events.example/e/1", "extras": {"imageLinks": links}}
+    respx.post(URL).mock(return_value=httpx.Response(200, json={"results": [item]}))
+
+    result = await _provider(make_http).search(EVENT_QUERY)
+
+    assert len(result.hits[0].images) == MAX_IMAGE_LINKS
+
+
+@pytest.mark.parametrize("extras", [None, "oops", [], {"richImageLinks": "oops"}, {"imageLinks": {"a": 1}}])
+@respx.mock
+async def test_unexpected_extras_give_a_hit_without_pictures(extras: object, make_http: HttpFactory) -> None:
+    item: Payload = {"url": "https://events.example/e/1", "text": "x", "image": 5, "extras": extras}
+    respx.post(URL).mock(return_value=httpx.Response(200, json={"results": [item]}))
+
+    result = await _provider(make_http).search(EVENT_QUERY)
+
+    assert (result.hits[0].image, result.hits[0].images) == (None, [])
 
 
 @pytest.mark.parametrize("days", [1, 7, 30, 400])

@@ -17,13 +17,22 @@ from typing import Literal, cast
 import httpx
 
 from tg_discovery.domain.enums import Flow
-from tg_discovery.domain.urls import clean_url
-from tg_discovery.providers.base import PriceSpec, ProviderCall, ProviderError, SearchHit, SearchQuery, SearchResult
+from tg_discovery.domain.urls import clean_image_url, clean_url
+from tg_discovery.providers.base import (
+    PageImage,
+    PriceSpec,
+    ProviderCall,
+    ProviderError,
+    SearchHit,
+    SearchQuery,
+    SearchResult,
+)
 from tg_discovery.providers.metering import MeteredHttp
 
 URL = "https://api.exa.ai/search"
 MAX_RESULTS = 100
 MAX_CONTENT_CHARS = 8_000
+MAX_IMAGE_LINKS = 12  # pictures asked for per page (events only): ``contents.extras.richImageLinks``
 
 ExaSearchType = Literal["instant", "fast", "auto", "deep-lite", "deep", "deep-reasoning"]
 
@@ -122,6 +131,21 @@ def _content(item: dict[str, object]) -> str:
     return next((candidate for candidate in candidates if candidate), "")[:MAX_CONTENT_CHARS]
 
 
+def _page_images(item: dict[str, object]) -> list[PageImage]:
+    """The pictures of the page from ``extras``: ``richImageLinks`` (url and alt) or else plain ``imageLinks``."""
+    extras = _mapping(item.get("extras"))
+    rich = [_mapping(entry) for entry in _items(extras.get("richImageLinks"))]
+    candidates = [(_text(entry.get("url")), _text(entry.get("alt")) or None) for entry in rich] or [
+        (_text(link), None) for link in _items(extras.get("imageLinks"))
+    ]
+    images: list[PageImage] = []
+    for raw, alt in candidates:
+        url = clean_image_url(raw)
+        if url and all(image.url != url for image in images) and len(images) < MAX_IMAGE_LINKS:
+            images.append(PageImage(url=url, alt=alt))
+    return images
+
+
 def _hit(raw: object) -> SearchHit | None:
     item = _mapping(raw)
     url = _text(item.get("url"))
@@ -132,6 +156,8 @@ def _hit(raw: object) -> SearchHit | None:
         title=_text(item.get("title")) or None,
         content=_content(item),
         published_at=_parse_time(item.get("publishedDate")),
+        image=clean_image_url(_text(item.get("image"))),
+        images=_page_images(item),
     )
 
 
@@ -161,14 +187,20 @@ class ExaSearch:
     async def search(self, query: SearchQuery) -> SearchResult:
         """Run one search; ``requested`` is ``numResults``, which Exa caps at 100.
 
-        Each hit carries up to ``MAX_CONTENT_CHARS`` characters of page text.
+        Each hit carries up to ``MAX_CONTENT_CHARS`` characters of page text and Exa's main picture of the page (its
+        ``image`` field, returned by default). Event searches also ask for up to ``MAX_IMAGE_LINKS`` pictures of the
+        page (``contents.extras.richImageLinks``); the pricing page lists no charge for them, and the real cost is
+        read from ``costDollars.total`` either way. Only the URLs are kept.
         """
         requested = min(query.max_results, MAX_RESULTS)
+        contents: dict[str, object] = {"text": {"maxCharacters": MAX_CONTENT_CHARS}}
+        if query.flow is Flow.EVENT:
+            contents["extras"] = {"richImageLinks": MAX_IMAGE_LINKS}
         body: dict[str, object] = {
             "query": query.text,
             "type": self._search_type,
             "numResults": requested,
-            "contents": {"text": {"maxCharacters": MAX_CONTENT_CHARS}},
+            "contents": contents,
         }
         if query.country:
             body["userLocation"] = query.country

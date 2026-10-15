@@ -30,7 +30,7 @@ class ProviderSettings(BaseSettings):
     aws_bedrock_api_token: SecretStr | None = None
     aws_bedrock_openai_url: str | None = None
     extractor_model_id: str = "openai.gpt-oss-120b"
-    # Unverified list prices (guide section 3.6 says "about"); confirm against the Bedrock price list before the pilot.
+    # Unverified list prices (guide section 3.6 says "about");
     extractor_input_usd_per_1m_tokens: float = 0.15
     extractor_output_usd_per_1m_tokens: float = 0.60
     # Reasoning models spend output tokens thinking; "none" omits the parameter if the endpoint rejects it.
@@ -67,6 +67,15 @@ class Settings(ProviderSettings):
     run_ttl_event_hours: int = Field(default=3, ge=0)  # a finished run this recent answers the same request again
     run_ttl_venue_hours: int = Field(default=168, ge=0)
     city_radius_km: float = Field(default=15.0, gt=0, le=100)  # the search area around a city centre
+    # Read the pages events were found on to collect their picture URLs (robots.txt honoured, nothing downloaded).
+    fetch_event_pictures: bool = True
+    # Keep the phone, opening hours, description and price that Google shows (through SerpApi) instead of dropping them.
+    # Off by default because Google's terms do not allow storing what Google displays about a place, and Google v.
+    # SerpApi is still in court (guide sections 3.5 and 14, question 8): Google-derived drafts normally keep only names,
+    # addresses, coordinates, URLs and ids. The owner asked for this switch on 2026-10-13 so the POC's reviewers can see
+    # those fields; get a legal opinion before turning it on for anything published on TravelGay. Socials, organisers,
+    # pictures and evidence quotes from Google are dropped either way.
+    keep_google_details: bool = False
 
     @property
     def accepted_providers(self) -> frozenset[str]:

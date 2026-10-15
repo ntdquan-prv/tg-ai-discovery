@@ -63,6 +63,15 @@ def is_public_address(address: str) -> bool:
 
 async def assert_public_url(url: str, resolver: Resolver = system_resolver) -> None:
     """Raise ``UnsafeUrlError`` unless ``url`` is plain http(s) to a host whose every address is public."""
+    await public_addresses(url, resolver)
+
+
+async def public_addresses(url: str, resolver: Resolver = system_resolver) -> list[str]:
+    """The addresses of the host of ``url``, after checking that the URL is plain http(s) and every address is public.
+
+    Raises ``UnsafeUrlError`` otherwise and ``UnresolvableHostError`` when the name does not resolve. A caller that
+    connects to one of the returned addresses (see ``page_fetch``) cannot be steered elsewhere by a second DNS answer.
+    """
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https"):
         msg = f"scheme '{parts.scheme}' is not allowed"
@@ -82,6 +91,7 @@ async def assert_public_url(url: str, resolver: Resolver = system_resolver) -> N
         if not is_public_address(address):
             msg = f"{host} resolves to the non-public address {address}"
             raise UnsafeUrlError(msg)
+    return list(addresses)
 
 
 def _classify(status: int) -> UrlProbe:

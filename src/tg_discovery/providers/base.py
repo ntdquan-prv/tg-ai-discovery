@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from tg_discovery.domain.enums import Flow
 from tg_discovery.domain.geo import BoundingBox
 from tg_discovery.domain.models import VenueDraft
+from tg_discovery.domain.page_images import PageImage
 
 
 class BudgetExceededError(RuntimeError):
@@ -102,6 +103,8 @@ class SearchHit(BaseModel):
     title: str | None = None
     content: str = ""  # snippet, highlights, summary or page text, whatever the provider returns
     published_at: datetime | None = None  # the provider's page date (published, page age or last modified)
+    image: str | None = None  # the provider's main picture of the page (its social preview), when it has one
+    images: list[PageImage] = Field(default_factory=list[PageImage])  # more pictures from the page, when asked for
 
 
 class SearchResult(BaseModel):
