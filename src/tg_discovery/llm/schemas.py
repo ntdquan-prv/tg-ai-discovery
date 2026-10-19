@@ -106,6 +106,19 @@ class ExtractedEvent(_TextModel):
     venue_address: str | None = None
     venue_city: str | None = None
     organizer: str | None = None
+    organizer_website: str | None = Field(
+        default=None, description="The organiser's own website or social media page, when a page gives it."
+    )
+    organizer_email: str | None = Field(
+        default=None,
+        description="A contact address the page gives for the organising company, collective or venue (info@, "
+        "booking@...). Never a private person's own address.",
+    )
+    organizer_phone: str | None = Field(
+        default=None,
+        description="A phone number the page gives for the organising company, collective or venue, copied as written. "
+        "Never a private person's own number.",
+    )
     audience: Audience = Audience.UNKNOWN
     official_url: str | None = Field(default=None, description="The event's own page or the organiser's site.")
     tickets_url: str | None = None
@@ -140,15 +153,6 @@ class ExtractedEvent(_TextModel):
 
 class EventExtraction(BaseModel):
     events: list[ExtractedEvent]
-
-
-class LocalQuery(BaseModel):
-    text: str
-    language: str = Field(description="ISO 639-1 code of the language the query is written in.")
-
-
-class LocalQueries(BaseModel):
-    queries: list[LocalQuery]
 
 
 def tool_schema(model: type[BaseModel]) -> dict[str, object]:

@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tg-discovery Process Flow</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --surface: #ffffff; --ink: #1d1d1f; --muted: #5f6368; --line: #dcdcd8; --code: #f0f0ec;
+    --accent: #5b4fc4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141416; --surface: #1d1d20; --ink: #ececec; --muted: #a3a3a8; --line: #333338; --code: #2a2a2e;
+      --accent: #a79cf5;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141416; --surface: #1d1d20; --ink: #ececec; --muted: #a3a3a8; --line: #333338; --code: #2a2a2e;
+    --accent: #a79cf5;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1280px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  h2 { font-size: 20px; margin: 40px 0 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+  h3 { font-size: 16px; margin: 24px 0 8px; }
+  p { margin: 8px 0; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 0; }
+  nav a { color: var(--ink); text-decoration: none; border: 1px solid var(--line); background: var(--surface);
+    padding: 4px 10px; border-radius: 999px; font-size: 13px; }
+  .diagram { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px;
+    overflow-x: auto; margin: 12px 0; }
+  .diagram svg { max-width: none; height: auto; display: block; margin: 0 auto; }
+  .legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px 16px;
+    font-size: 14px; color: var(--muted); margin: 8px 0; }
+  .legend b { color: var(--ink); }
+  details { margin: 8px 0; }
+  summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+  pre { background: var(--code); padding: 12px; border-radius: 8px; overflow-x: auto; font-size: 12.5px;
+    font-family: ui-monospace, Consolas, monospace; }
+  .error { color: #b3261e; font-size: 14px; }
+  footer { color: var(--muted); font-size: 13px; margin-top: 40px; border-top: 1px solid var(--line); padding-top: 12px; }
+</style>
+</head>
+<body>
+<main>
+<h1>tg-discovery: process flow</h1>
+<p class="sub">How a discovery run works, from the admin's click to the review decision, as built on 2026-10-18.
+Diagrams are drawn with Mermaid; the source of each one is under it and can be pasted into mermaid.live or draw.io.</p>
+<nav>
+  <a href="#flow">1. Process flow</a>
+  <!-- <a href="#dfd0">2. DFD level 0 (context)</a> <a href="#dfd1">3. DFD level 1</a> (hidden for now) -->
+</nav>
+
+<!-- ================================================================== -->
+<h2 id="flow">1. Process flow: one discovery run</h2>
+<p>The admin starts a run for one country and up to 10 cities. The API answers at once; the run then works through the
+cities in the background, and the admin reviews what it found.</p>
+<div class="diagram" id="flow-out"></div>
+<div class="legend">
+  <div><b>Rounded box</b>: start or end of a path</div>
+  <div><b>Diamond</b>: decision</div>
+  <div><b>Dotted line</b>: rule that applies to the linked steps</div>
+</div>
+<details><summary>Mermaid source</summary><pre id="flow-code"></pre></details>
+
+<script type="text/plain" id="flow-src">
+flowchart TD
+  start(["Admin clicks Discovery in the TravelGay CMS"]) --> req["POST /api/v1/events/runs or /venues/runs<br/>country, cities, window_days or venue_types, force"]
+  req --> valid{"Valid<br/>request?"}
+  valid -- no --> err(["401 / 403 / 422 error<br/>token, role, IANA time zone,<br/>at most 10 cities, known venue types"])
+  valid -- yes --> same{"Same request<br/>running or recent,<br/>no force?"}
+  same -- yes --> reuse(["202 with the earlier run, deduplicated: true<br/>recent = events 3 h, venues 7 days; nothing spent"])
+  same -- no --> create["Create run DSC-yyyymmdd-NNN, status queued"]
+  create --> accepted(["202 Accepted: run_id and code"])
+  create --> bg["Background task: status running<br/>build the providers allowed by PROVIDERS_ENABLED,<br/>API keys and ACCEPTED_TERMS; open the run budget"]
+  bg --> city["Next city"]
+  city --> hasll{"lat / lng given?"}
+  hasll -- yes --> area["Search area: 15 km box around the centre"]
+  hasll -- no --> nom["Look the city up on Nominatim"]
+  nom -- found --> area
+  nom -- not found --> skip["Skip the city, record the problem"]
+  area --> flowq{"Flow?"}
+  flowq -- event --> qe["12 English event queries<br/>pages from the last window_days"]
+  flowq -- venue --> qv["3 queries per chosen venue type<br/>all 10 types when none is chosen"]
+  qe --> search["Web search per query:<br/>Exa, plus SerpApi Google events if enabled"]
+  qv --> search
+  qv --> places["Place search: Google Maps via SerpApi per query,<br/>OpenStreetMap lgbtq tag once per city"]
+  search --> extract["AI reads the pages: gpt-oss-120b on AWS Bedrock<br/>answers in a fixed JSON schema"]
+  extract --> verify["Code checks: cited pages were in the input,<br/>quotes appear on the page, organiser contacts<br/>are an organisation's and appear on the page"]
+  verify --> evpage{"Event from a<br/>non-Google page?"}
+  evpage -- yes --> pics["Read the event page for picture URLs<br/>robots.txt honoured, SSRF guard"]
+  evpage -- no --> scrub
+  pics --> scrub["Scrub Google-derived details<br/>unless KEEP_GOOGLE_DETAILS is on"]
+  places --> scrub
+  scrub --> merge["Merge drafts of the same venue or event<br/>ids, website, name, place, date"]
+  merge --> score["Score 0 to 1 from weighted parts"]
+  score --> gate{"Hard gate or<br/>score below 0.35?"}
+  gate -- yes --> drop["Drop and count the reason: expired, cancelled,<br/>closed for good, outside the area,<br/>event not LGBTQ+, low score"]
+  gate -- no --> keep["needs_review<br/>fast_approve label at 0.75 or more"]
+  keep --> stored{"Already stored?"}
+  stored -- no --> insert["Insert: new"]
+  stored -- yes --> update["changed: update the candidate<br/>unchanged: only fill empty details<br/>a decided candidate is never reopened"]
+  insert --> sighting["Record a sighting:<br/>run, outcome, providers, score"]
+  update --> sighting
+  sighting --> progress["Update run progress<br/>counts of new, changed, unchanged, dropped"]
+  drop --> progress
+  progress --> more{"More cities?"}
+  skip --> more
+  more -- yes --> city
+  more -- no --> finish["Finish the run: succeeded, partial or failed<br/>cost_usd, stats, timing"]
+  finish --> review["Admin follows the run, opens the review table<br/>and each review packet"]
+  review --> decide{"Decision<br/>with version"}
+  decide -- approve --> approved(["approved: row in publish_outbox and audit_log<br/>nothing is published, nothing written to TravelGay"])
+  decide -- "reject + reason" --> rejected(["rejected: audit_log"])
+  decide -- "someone decided first" --> conflict(["409: reload the packet"])
+  budget["Budget rule: every paid call reserves its cost first;<br/>when BUDGET_USD_PER_RUN is spent, searching stops"]
+  failure["Failure rule: a failed or timed-out call is counted and skipped;<br/>the others go on and the run ends partial"]
+  budget -.- search
+  budget -.- places
+  budget -.- extract
+  failure -.- search
+  failure -.- extract
+</script>
+
+<!-- Sections 2 and 3 (data flow diagrams) are hidden for now: a <template> is kept in the file but never shown or run.
+     To show them again, remove the <template> and </template> lines and add "dfd0", "dfd1a", "dfd1b" back to the
+     list of diagrams in the script at the end of the page. -->
+<template id="hidden-dfd">
+<h2 id="dfd0">2. Data flow diagram, level 0 (context)</h2>
+<p>The whole service as one process, with the outside parties it exchanges data with.</p>
+<div class="diagram" id="dfd0-out"></div>
+<div class="legend">
+  <div><b>Rectangle</b>: external entity</div>
+  <div><b>Circle</b>: process (the whole system)</div>
+  <div><b>Two-way arrow</b>: label reads "sent / received"</div>
+  <div><b>Dashed arrow</b>: planned, not built yet</div>
+</div>
+<details><summary>Mermaid source</summary><pre id="dfd0-code"></pre></details>
+
+<script type="text/plain" id="dfd0-src">
+flowchart LR
+  admin["Admin<br/>via the TravelGay CMS"]
+  sys(("0<br/>tg-discovery"))
+  exa["Exa<br/>web search"]
+  serp["SerpApi<br/>Google Maps, Google events"]
+  osm["OpenStreetMap<br/>Overpass"]
+  nom["Nominatim<br/>geocoder"]
+  llm["AWS Bedrock<br/>gpt-oss-120b"]
+  web["Event web pages"]
+  pub["TravelGay publisher<br/>not built"]
+  admin -->|"run request, review decisions"| sys
+  sys -->|"run status, review table, review packets"| admin
+  sys <-->|"queries / pages with text and image links"| exa
+  sys <-->|"queries, map area / places, event entries"| serp
+  sys <-->|"area box / places tagged lgbtq"| osm
+  sys <-->|"city name / coordinates"| nom
+  sys <-->|"page text, schema / records as JSON"| llm
+  sys <-->|"page requests / picture URLs"| web
+  sys -.->|"approved candidates"| pub
+</script>
+
+<!-- ================================================================== -->
+<h2 id="dfd1">3. Data flow diagram, level 1</h2>
+<p>The service split into its seven processes and five data stores (Postgres tables). It is drawn in two parts that
+share the same data stores: part A runs a discovery (processes 1.0 to 5.0), part B serves the review and records the
+decisions (6.0 and 7.0).</p>
+<div class="legend">
+  <div><b>Rectangle</b>: external entity</div>
+  <div><b>Rounded box</b>: process, numbered</div>
+  <div><b>Cylinder</b>: data store (Postgres table)</div>
+  <div><b>Two-way arrow</b>: label reads "sent / received"</div>
+  <div><b>Dashed arrow</b>: planned, not built yet</div>
+</div>
+
+<h3>Part A: running a discovery</h3>
+<div class="diagram" id="dfd1a-out"></div>
+<details><summary>Mermaid source</summary><pre id="dfd1a-code"></pre></details>
+
+<script type="text/plain" id="dfd1a-src">
+flowchart TB
+  admin["Admin<br/>via the TravelGay CMS"]
+  p1("1.0<br/>Accept run request")
+  p2("2.0<br/>Locate city")
+  p3("3.0<br/>Collect and extract")
+  p4("4.0<br/>Merge and score")
+  p5("5.0<br/>Store candidates")
+  d1[("D1 discovery_runs")]
+  d2[("D2 event_candidates,<br/>venue_candidates")]
+  d3[("D3 sightings")]
+  subgraph outside["External sources"]
+    direction LR
+    nom["Nominatim"]
+    exa["Exa"]
+    serp["SerpApi"]
+    osm["OpenStreetMap"]
+    llm["AWS Bedrock<br/>gpt-oss-120b"]
+    web["Event web pages"]
+  end
+
+  admin -->|"run request"| p1
+  p1 -->|"run_id, code, deduplicated"| admin
+  p1 <-->|"new run / same request already there"| d1
+  d1 -->|"run filter"| p2
+  p2 <-->|"city name / coordinates"| nom
+  p2 -->|"city: area, time zone"| p3
+  p3 <-->|"queries / pages"| exa
+  p3 <-->|"queries / places, event entries"| serp
+  p3 <-->|"area / tagged places"| osm
+  p3 <-->|"pages, schema / records"| llm
+  p3 <-->|"requests / picture URLs"| web
+  p3 -->|"drafts, call stats"| p4
+  p4 -->|"scored candidates, rejected counts"| p5
+  p5 <-->|"new, changed, filled gaps / stored candidate"| d2
+  p5 -->|"sightings"| d3
+  p5 -->|"progress, stats, cost, status"| d1
+</script>
+
+<h3>Part B: review and decision</h3>
+<div class="diagram" id="dfd1b-out"></div>
+<details><summary>Mermaid source</summary><pre id="dfd1b-code"></pre></details>
+
+<script type="text/plain" id="dfd1b-src">
+flowchart LR
+  admin["Admin<br/>via the TravelGay CMS"]
+  p6("6.0<br/>Serve runs and review")
+  p7("7.0<br/>Record decision")
+  d1[("D1 discovery_runs")]
+  d2[("D2 event_candidates,<br/>venue_candidates")]
+  d3[("D3 sightings")]
+  d4[("D4 publish_outbox")]
+  d5[("D5 audit_log")]
+  pub["TravelGay publisher<br/>not built"]
+
+  d1 -->|"runs"| p6
+  d3 -->|"what each run found"| p6
+  d2 -->|"candidates"| p6
+  p6 -->|"run status, review table, review packet"| admin
+  admin -->|"approve or reject, version, reason"| p7
+  p7 -->|"result or 409 conflict"| admin
+  p7 <-->|"decision, new version / status, version"| d2
+  p7 -->|"approved payload"| d4
+  p7 -->|"decision record"| d5
+  d4 -.->|"pending rows"| pub
+</script>
+</template>
+
+<footer>tg-discovery · diagrams of the code as of 2026-10-18 · rendered with Mermaid 11 from cdn.jsdelivr.net (needs an internet connection; the source stays readable without it).</footer>
+</main>
+
+<script type="module">
+  const diagrams = ["flow"]; // "dfd0", "dfd1a", "dfd1b" are hidden in <template id="hidden-dfd">
+  for (const name of diagrams) {
+    document.getElementById(`${name}-code`).textContent = document.getElementById(`${name}-src`).textContent.trim();
+  }
+  try {
+    const { default: mermaid } = await import("https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs");
+    const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: "strict",
+      theme: dark ? "dark" : "default",
+      flowchart: { curve: "basis", nodeSpacing: 40, rankSpacing: 50, wrappingWidth: 260 },
+    });
+    for (const name of diagrams) {
+      const target = document.getElementById(`${name}-out`);
+      try {
+        const { svg } = await mermaid.render(`${name}-svg`, document.getElementById(`${name}-src`).textContent);
+        target.innerHTML = svg;
+      } catch (error) {
+        target.innerHTML = `<p class="error">This diagram could not be drawn: ${String(error.message || error).slice(0, 200)}</p>`;
+      }
+    }
+  } catch {
+    for (const name of diagrams) {
+      document.getElementById(`${name}-out`).innerHTML =
+        '<p class="error">Mermaid could not be loaded (offline?). The source under each diagram can be pasted into mermaid.live.</p>';
+    }
+  }
+</script>
+</body>
+</html>

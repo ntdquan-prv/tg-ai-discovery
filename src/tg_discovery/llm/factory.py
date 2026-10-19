@@ -1,4 +1,4 @@
-"""Builds the extraction model client from the settings; the service and the bake-off harness share it."""
+"""Builds the extraction model client from the settings."""
 
 import httpx
 
@@ -29,4 +29,5 @@ def bedrock_from_settings(
         guard=budget,
         reasoning_effort=effort,
         forced_tool_choice=settings.extractor_forced_tool_choice,
+        timeout_s=settings.extractor_timeout_s,
     )

@@ -75,7 +75,7 @@ def two_events_and_a_past_one() -> ScriptedCollector:
                     price="Free",
                     organizer="Brunch Co",
                     images=["https://cdn.test/posters/brunch.jpg", "https://cdn.test/gallery/1.jpg"],
-                ),
+                ).model_copy(update={"organizer_email": "info@brunch.test", "organizer_url": "https://brunch.test"}),
             ),
             ("serpapi_events", event("Drag Brunch", start=SOON, official=None, provider="serpapi_events")),
             ("exa", event("Pride Picnic", start=SOON + timedelta(days=3), venue_name="The Park", address=None)),
@@ -130,7 +130,12 @@ async def test_a_run_finds_scores_and_stores_candidates_for_review(
         first = results["items"][0]
         assert first["city"] == "Testville"
         assert (first["next_date"], first["time"]) == (SOON.isoformat(), "21:00")
-        assert first["contact"] == {"name": "Brunch Co", "phone": None, "email": None}
+        assert first["contact"] == {
+            "name": "Brunch Co",
+            "phone": None,
+            "email": "info@brunch.test",
+            "url": "https://brunch.test",
+        }
         assert first["found_by"] == ["exa", "serpapi_events"]
         assert first["status"] == "needs_review"
         queue = (await client.get("/events/candidates")).json()

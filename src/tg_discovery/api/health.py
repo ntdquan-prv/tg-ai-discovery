@@ -15,7 +15,7 @@ from tg_discovery.deps import SessionDep, SettingsDep
 
 DB_PING_TIMEOUT_S = 5
 
-router = APIRouter(tags=["ops"])
+router = APIRouter(tags=["health"])
 
 
 class HealthResponse(BaseModel):

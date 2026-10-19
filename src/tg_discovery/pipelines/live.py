@@ -18,16 +18,14 @@ from tg_discovery.config import Settings
 from tg_discovery.domain.enums import Flow, VenueType
 from tg_discovery.domain.geo import BoundingBox
 from tg_discovery.domain.models import EventDraft, VenueDraft, scrub_google_derived
-from tg_discovery.llm.bedrock_responses import LlmError
 from tg_discovery.llm.factory import bedrock_from_settings
 from tg_discovery.pipelines.common.budget import Budget
 from tg_discovery.pipelines.common.extractor import DraftExtractor, ExtractionContext, Extractor
 from tg_discovery.pipelines.common.pictures import PictureFinder
-from tg_discovery.pipelines.common.queries import PlannedQuery, build_query_plan, build_venue_plan
+from tg_discovery.pipelines.common.queries import PlannedQuery, build_event_plan, build_venue_plan
 from tg_discovery.pipelines.discovery import AreaError, CityBatch, CityRequest, CityTarget, RunEnvironment
 from tg_discovery.providers.base import (
     BudgetExceededError,
-    ProviderError,
     SearchHit,
     SearchProvider,
     SearchQuery,
@@ -83,13 +81,8 @@ class LiveCollector:
         if flow is Flow.VENUE:
             queries = build_venue_plan(city=city.name, country_name=city.country_name, venue_types=venue_types)
         else:
-            queries = build_query_plan(
-                flow,
-                city=city.name,
-                country_name=city.country_name,
-                today=today,
-                local=(),
-                event_freshness_days=window_days,
+            queries = build_event_plan(
+                city=city.name, country_name=city.country_name, today=today, freshness_days=window_days
             )
         jobs: list[Awaitable[None]] = []
         if flow is Flow.VENUE:
@@ -180,11 +173,7 @@ class LiveCollector:
         except BudgetExceededError:
             stop.set()
             return
-        except (LlmError, ProviderError) as error:
-            batch.stats.note("extract", time.perf_counter() - started)
-            self._failed(batch, f"{provider.name} extraction", error)
-            return
-        except Exception as error:
+        except Exception as error:  # LlmError, ProviderError or a bug: one batch must not lose the others
             batch.stats.note("extract", time.perf_counter() - started)
             self._failed(batch, f"{provider.name} extraction", error)
             return
@@ -255,7 +244,7 @@ class LiveGeocoder:
     def __init__(self, nominatim: Nominatim | None, radius_km: float) -> None:
         self._nominatim = nominatim
         self._radius_km = radius_km
-        self._cache: dict[str, BoundingBox] = {}  # Nominatim's policy asks for results to be cached
+        self._cache: dict[str, BoundingBox] = {}  # per run; Nominatim's policy asks for results to be cached
 
     async def locate(self, request: CityRequest, country: str) -> BoundingBox | None:
         if request.lat is not None and request.lng is not None:
@@ -281,7 +270,15 @@ async def live_environment(settings: Settings) -> AsyncGenerator[RunEnvironment]
             settings, client, budget, names=settings.enabled_providers, accepted=settings.accepted_providers
         )
         llm = bedrock_from_settings(settings, client, budget) if built.search else None
-        extractor = Extractor(llm, max_output_tokens=settings.extractor_max_output_tokens) if llm else None
+        extractor = (
+            Extractor(
+                llm,
+                max_output_tokens=settings.extractor_max_output_tokens,
+                log_page_chars=settings.log_page_text_chars,
+            )
+            if llm
+            else None
+        )
         nominatim = None
         if settings.nominatim_user_agent:
             http = MeteredHttp(

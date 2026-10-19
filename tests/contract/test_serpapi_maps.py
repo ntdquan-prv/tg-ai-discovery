@@ -255,7 +255,7 @@ async def test_scrubbing_keeps_the_ids_and_the_level_and_drops_the_details(make_
 
 
 @respx.mock
-async def test_with_the_owners_switch_the_details_are_kept(make_http: HttpFactory) -> None:
+async def test_keep_google_details_keeps_the_details(make_http: HttpFactory) -> None:
     _serve()
 
     bar = (await _adapter(make_http).find_venues(QUERY)).venues[0]

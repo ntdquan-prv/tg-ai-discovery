@@ -1,7 +1,7 @@
 """Turns stored candidates into the shapes the API returns: table rows and review packets."""
 
 import re
-from datetime import date, datetime, time
+from datetime import date, time
 from typing import Literal, cast
 
 from tg_discovery.api.schemas import (
@@ -96,6 +96,12 @@ def _first_source(sources: list[SourceRef], providers: list[str]) -> str:
     return providers[0] if providers else "unknown"
 
 
+def _organizer(event: EventDraft) -> Contact:
+    return Contact(
+        name=event.organizer, phone=event.organizer_phone, email=event.organizer_email, url=event.organizer_url
+    )
+
+
 def candidate_row(row: Candidate, flow: Flow, today: date) -> CandidateRow:
     next_date: date | None = None
     clock: str | None = None
@@ -105,7 +111,7 @@ def candidate_row(row: Candidate, flow: Flow, today: date) -> CandidateRow:
         if upcoming is not None:
             next_date, clock = upcoming.start_date, _clock(upcoming.start_time)
         address = event.venue.address or event.venue.name
-        contact = Contact(name=event.organizer)
+        contact = _organizer(event)
         label = _first_source(event.sources, row.found_by)
     else:
         venue = VenueDraft.model_validate(row.payload)
@@ -189,7 +195,7 @@ def _event_block(draft: EventDraft) -> EventBlock:
         venue=Place(
             name=venue.name, address=venue.address, city=venue.city, country=venue.country, lat=venue.lat, lng=venue.lng
         ),
-        organizer=Contact(name=draft.organizer),
+        organizer=_organizer(draft),
         tickets=Tickets(kind=ticket_kind(draft.price_text), price_text=draft.price_text, url=draft.links.tickets),
         links=Links(
             official=draft.links.official,
@@ -221,9 +227,7 @@ def _venue_block(draft: VenueDraft) -> VenueBlock:
     )
 
 
-def review_packet(
-    row: Candidate, flow: Flow, *, run: DiscoveryRun | None, position: Position | None, now: datetime
-) -> ReviewPacket:
+def review_packet(row: Candidate, flow: Flow, *, run: DiscoveryRun | None, position: Position | None) -> ReviewPacket:
     draft: EventDraft | VenueDraft = (
         EventDraft.model_validate(row.payload) if flow is Flow.EVENT else VenueDraft.model_validate(row.payload)
     )

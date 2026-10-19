@@ -1,12 +1,12 @@
-"""Scores and triage for merged drafts (guide sections 4 and 5): a number, a decision and the reasons for doubt.
+"""Scores and triage for merged drafts: a number, a decision and the reasons for doubt.
 
 A candidate is scored 0 to 1 from weighted parts. Hard gates reject outright (closed for good, outside the area,
 cancelled, already over, and for events not LGBTQ+). Below ``REJECT_BELOW`` a candidate is dropped as junk; everything
 else goes to a human, and at ``FAST_APPROVE_FROM`` or more it is marked as an easy approve (a label, never an automatic
 approval).
 
-Venues are not limited to LGBTQ+ places (the owner's call on 2026-10-13): their LGBTQ+ level is assessed and shown to
-the reviewer, but it neither scores nor rejects a venue. Events still are LGBTQ+ events.
+Venues are not limited to LGBTQ+ places: their LGBTQ+ level is shown to the reviewer but neither scores nor rejects a
+venue. Events must be LGBTQ+.
 """
 
 from collections.abc import Sequence
@@ -37,7 +37,8 @@ EVENT_WEIGHTS = {
     "completeness": 0.10,
     "source_trust": 0.10,
 }
-# How far each provider's facts are trusted before anything is verified (guide 13.4 gives TravelGay's own priors).
+# How far each provider's facts are trusted before anything is verified; starting values, to be tuned from the
+# admins' approve and reject decisions.
 PROVIDER_TRUST = {"osm_overpass": 0.7, "serpapi_maps": 0.7, "serpapi_events": 0.6, "exa": 0.5}
 DEFAULT_TRUST = 0.5
 FIELD_COUNT = 8  # required plus optional fields of a venue or an event draft

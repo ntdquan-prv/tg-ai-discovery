@@ -8,8 +8,7 @@ Code assessed  : the first API slice of tg-discovery (runs, review table, review
 Evidence       : code review; a scripted load simulation run on 2026-10-10 (no vendor was
                  called, nothing was spent); a merge micro-benchmark; the two real New York
                  runs of 2026-10-08.
-See also       : tg-discovery-repo-guide.md (section 7, section 13.5, milestone M4),
-                 docs/api.md, docs/development-problems.md
+See also       : docs/api.md
 
 
 CONTENTS
@@ -27,7 +26,7 @@ CONTENTS
    8. Recommendations
    9. Prioritized action plan
   10. Acceptance tests
-  11. Decisions needed from the owner
+  11. Decisions needed from the product owner
   12. Limits of this report
    Appendix A. Simulation setup and raw results
    Appendix B. Cost model
@@ -43,7 +42,7 @@ example 05:00) in the TravelGay CMS. It also lists other reliability and operati
 while analysing that case.
 
 Every issue has an ID, a severity, the kind of evidence behind it, what happens, the cause, a
-recommended fix and a rough effort. Section 11 lists the decisions that only the owner can take.
+recommended fix and a rough effort. Section 11 lists the decisions that only the product owner can take.
 
 Out of scope: search quality, scoring quality, the review UI, and the legal terms of the
 providers (mentioned only where they affect operations).
@@ -67,7 +66,7 @@ factor. What fails first is:
   e. Vendor quotas and cost: about 74 USD per morning for 150 cities in both flows, and no
      daily spending cap (K2, K3).
 
-The design that fixes this is already in the guide (section 7): a Postgres queue, worker(s) and
+The design that fixes this was planned from the start: a Postgres queue, worker(s) and
 a scheduler. The first slice runs the work inside the API process so that the API could be
 delivered early; the problems below are the price of that shortcut.
 
@@ -132,7 +131,7 @@ Recommended order (details in sections 8 and 9)
   Phase 2  Scheduler (S1-S7), merge algorithm, retention, per-city dates.
   Phase 3  Monitoring, alerts, load tests in CI, cost reduction by watchlist refresh.
 
-Decision needed now: where the schedules live (this service, as the guide proposes, or the
+Decision needed now: where the schedules live (this service, as first planned, or the
 CMS). See section 11.
 
 
@@ -320,8 +319,8 @@ C7. Startup cleanup fails runs owned by other processes   [MEDIUM, HIGH if scale
 
 C8. No wall-clock limit per run                                          [MEDIUM] [CODE]
     What happens: each provider call has a timeout (30 s default, 90 s SerpApi, 120 s Bedrock
-    with up to 4 attempts) but a run as a whole has none, although the guide (section 7) asks
-    for a wall-time cap. A hung run keeps its single-flight slot: the same request is answered
+    with up to 4 attempts) but a run as a whole has none, although the design asks for a
+    wall-time cap. A hung run keeps its single-flight slot: the same request is answered
     with the stuck run (deduplicated), even with force=true, until the service restarts.
     Fix: a per-run deadline (for example 20-30 minutes) with cancellation and a final status;
     a heartbeat-based reaper; a cancel endpoint.
@@ -350,7 +349,7 @@ C11. Data growth                                                      [LOW] [EST
     city produced 76 event and 167 venue candidates, so daily runs over 150 cities can add tens
     of thousands of rows per day. publish_outbox has no consumer yet and audit_log grows with
     every decision.
-    Fix: retention job (the guide asks for TTLs on rejected and expired data), table-size
+    Fix: retention job (TTLs on rejected and expired data), table-size
     monitoring, index review.
     Effort: S.
 
@@ -372,7 +371,7 @@ K1. Default run budget (1 USD) too low for 5-city runs                   [HIGH] 
     remaining cities get no results; the run ends 'partial'. Without anyone reading
     stats.stopped_by_budget, every 5-city run would be incomplete unnoticed.
     Fix: raise the cap or budget per city (for example 0.40 USD x number of cities); add a daily
-    cap with a circuit breaker (guide section 7); show stopped_by_budget in the CMS.
+    cap with a circuit breaker; show stopped_by_budget in the CMS.
     Effort: S.
 
 K2. Vendor quotas and policies cannot carry the load                [HIGH] [VENDOR + CALC]
@@ -416,7 +415,7 @@ K3. About 74 USD per morning, no daily spending cap                      [HIGH] 
     before anyone looks.
     Fix: a daily and a monthly cap in the service with a circuit breaker; spending limits in the
     vendors' dashboards; a cloud budget alert; deliberate choice of frequency and city lists; a
-    cheaper refresh (the guide's watchlist refresh skips unchanged sources with zero AI calls).
+    cheaper refresh (a watchlist refresh that skips unchanged sources with zero AI calls).
     Effort: S-M.
 
 K4. Reuse windows can surprise admins                                    [INFO] [CODE]
@@ -430,7 +429,7 @@ K5. Deployment configuration prerequisites                        [HIGH if misse
     * AWS_BEDROCK_OPENAI_URL must end with /v1 (gpt-oss on Bedrock); the old value fails.
     * NOMINATIM_USER_AGENT must carry a real contact; a placeholder example.com address was
       rejected by Overpass with HTTP 406.
-    * ACCEPTED_TERMS must name the providers whose terms the owner accepted (serpapi_events,
+    * ACCEPTED_TERMS must name the providers whose terms the product owner accepted (serpapi_events,
       serpapi_maps for the trial). Legal review of Google-derived data is advised before
       production.
     * SERVICE_TOKEN must be set in production: with no token the API answers 503 when
@@ -498,8 +497,8 @@ O7. No monitoring, alerting or morning summary                            [MEDIU
     metrics, alerts or summary. A failure at 05:00 is found later by someone looking.
     Fix: dashboards and alarms for runs by status, queue depth, run duration, cost per day
     against the cap, provider 429 and timeout rates, API latency (p99) and event-loop lag,
-    memory, database connections and disk; a daily summary ("X runs, Y failed, Z USD"); the cost
-    endpoint planned in the guide (M4).
+    memory, database connections and disk; a daily summary ("X runs, Y failed, Z USD"); a cost
+    endpoint.
 
 O8. Scaling out does not fix the problem                                       [INFO] [ANALYSIS]
     More or bigger machines do not raise vendor quotas and they make the burst worse, because
@@ -522,8 +521,8 @@ O8. Scaling out does not fix the problem                                       [
   S5. Overlapping schedules of different admins. Deduplicate per city (C9) before spending.
   S6. Ownership and cost control. A schedule needs an owner, an enabled flag, per-schedule and
       per-day cost caps and failure notification; decide what happens when an admin leaves.
-  S7. Where schedules live: in the CMS (it calls this API) or in this service (guide section 7:
-      a 'watches' table with a cron column; the CMS manages them through the API). Recommended:
+  S7. Where schedules live: in the CMS (it calls this API) or in this service (a
+      'watches' table with a cron column; the CMS manages them through the API). Recommended:
       in the service, so that spacing, per-city deduplication and budgets are decided in one
       place and the CMS stays thin.
 
@@ -559,14 +558,14 @@ O8. Scaling out does not fix the problem                                       [
   7. Start small in the first week (a few cities), then grow while watching cost, errors and
      latency.
 
-8.2 Target design: queue + worker + scheduler (guide section 7)
+8.2 Target design: queue + worker + scheduler
 
   Components: a stateless API -> a Postgres queue -> worker process(es) -> pipelines; a
   scheduler (the 'watches' table with cron); a publisher later.
 
   Properties:
     * Enqueue in the same transaction that inserts the run. Workers claim with SELECT ... FOR
-      UPDATE SKIP LOCKED (or Procrastinate, a Postgres-native queue named in the guide).
+      UPDATE SKIP LOCKED (or Procrastinate, a Postgres-native queue).
     * Global concurrency = number of simultaneous runs a worker handles (start with 2-3).
     * Shared per-provider limiters and quota counters. Simplest start: ONE worker process that
       runs 2-3 runs concurrently with async code, so the limiters can live in that process.
@@ -613,13 +612,12 @@ O8. Scaling out does not fix the problem                                       [
 
 8.5 Alternatives considered
 
-  * Airflow. The guide (section 13.5) decided against it: the existing warehouse DAGs are not a
-    usable base, and the repository must not depend on Airflow. Airflow could fire schedules
+  * Airflow. Ruled out from the start: the existing warehouse DAGs are not a usable base, and the repository must not depend on Airflow. Airflow could fire schedules
     and cap concurrent runs with pools, but it would not fix the service-side defects (C1,
     C4-C8), does not enforce per-provider limits inside a run, and needs a dispatcher DAG to
     follow schedules that admins create in the CMS. If it is ever used, it can only be an
     external HTTP caller of this API.
-  * Postgres queue + worker + scheduler inside the service (recommended; guide section 7).
+  * Postgres queue + worker + scheduler inside the service (recommended).
   * Cloud scheduler + queue (for example EventBridge Scheduler + SQS + ECS or Lambda): fits if
     the platform is AWS, but adds infrastructure and splits the logic.
   * Redis-based queues (Celery, arq, RQ, Dramatiq): need Redis or RabbitMQ.
@@ -680,7 +678,7 @@ the test database:
       duplicate candidates.
 
 
-11. DECISIONS NEEDED FROM THE OWNER
+11. DECISIONS NEEDED FROM THE PRODUCT OWNER
 -----------------------------------
 
   1. Where do schedules live: in this service (recommended) or in the CMS?

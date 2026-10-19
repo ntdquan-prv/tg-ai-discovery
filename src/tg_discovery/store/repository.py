@@ -3,7 +3,7 @@
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import cast
 from uuid import UUID, uuid4
@@ -161,7 +161,7 @@ async def fail_interrupted_runs(session_factory: async_sessionmaker[AsyncSession
             .values(status="failed", error="the service stopped while the run was in progress", finished_at=func.now())
         )
         await session.commit()
-        return int(result.rowcount or 0)  # type: ignore[attr-defined]
+        return int(result.rowcount or 0)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownArgumentType]
 
 
 async def update_progress(session: AsyncSession, run_id: UUID, progress: Json) -> None:
@@ -227,9 +227,18 @@ def _merged_images(payload: Json, draft: EventDraft) -> list[Json]:
     return [cast(Json, image.model_dump(mode="json")) for image in union_images(known, draft.images)]
 
 
-# Details outside the content hash: a run that only brings them still counts as "unchanged" (KEEP_GOOGLE_DETAILS can
-# make a later run find a phone or hours the first run did not keep), so they fill the gaps of a stored candidate.
-_GAP_FIELDS = ("phone", "opening_hours", "description", "price_text")
+# Fields outside the content hash: a run that only adds these (or pictures) stays "unchanged" and fills the empty ones
+# of a candidate awaiting review, without a new version; a stored value is never replaced.
+_GAP_FIELDS = (
+    "phone",
+    "opening_hours",
+    "description",
+    "price_text",
+    "organizer",
+    "organizer_url",
+    "organizer_email",
+    "organizer_phone",
+)
 
 
 def _filled_gaps(payload: Json, draft: EventDraft | VenueDraft) -> Json:
@@ -290,8 +299,6 @@ async def save_candidates(
                 for name, value in _columns(item).items():
                     setattr(row, name, value)
                 row.last_changed_at = now
-            # Pictures and the details above are not part of the content hash, so a run that only finds more of them
-            # still counts as "unchanged": they are added quietly, without a new version, while it awaits review.
             quiet = _filled_gaps(row.payload, draft) if row.status == "needs_review" else {}
             if images is not None and images != row.payload.get("images", []):
                 quiet["images"] = images
@@ -400,7 +407,3 @@ async def decide(
     )
     await session.commit()
     return row
-
-
-def today() -> date:
-    return datetime.now(UTC).date()

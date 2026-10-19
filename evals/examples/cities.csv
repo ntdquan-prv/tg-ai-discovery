@@ -1,3 +1,0 @@
-slug,name,country,country_name,timezone,languages,aliases,tg_city_id,lat,lng,south,west,north,east
-testville,Testville,ZZ,Testland,Etc/UTC,en,,9001,10.0,20.0,9.9,19.9,10.1,20.1
-exampleburg,Exampleburg,ZZ,Testland,Etc/UTC,en|de,Exampleberg,9002,11.0,21.0,10.9,20.9,11.1,21.1

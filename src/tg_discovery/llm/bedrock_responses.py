@@ -1,9 +1,9 @@
 """Client for the OpenAI-compatible Responses API on Amazon Bedrock, used for structured answers by function call.
 
 Structured output is a function call: the tool is declared flat (no nested ``function`` key) and the instructions tell
-the model to answer only by calling it (guide section 13.2). ``tool_choice`` is ``auto``: gpt-oss models on Bedrock run
-in the Harmony format, which rejects a named tool ("Only 'auto' tool_choice is supported", seen live on 2026-10-08), so
-``forced_tool_choice`` is for models that accept one. Retries follow the guide: four attempts with two to twenty seconds
+the model to answer only by calling it. ``tool_choice`` is ``auto``: gpt-oss models on Bedrock run
+in the Harmony format, which rejects a named tool ("Only 'auto' tool_choice is supported", checked 2026-10-08), so
+``forced_tool_choice`` is for models that accept one. Retries: four attempts with two to twenty seconds
 of exponential backoff on 429, 5xx and connection errors. Calls go through ``MeteredHttp`` so they are budgeted, timed
 and logged like every provider call.
 """
@@ -45,7 +45,7 @@ class LlmUsage(BaseModel):
 
 
 class LlmResult(BaseModel):
-    """The arguments the model passed to the forced function, with usage and the call record."""
+    """The arguments the model passed to the function, with usage and the call record."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -65,7 +65,7 @@ class LlmError(Exception):
 
 
 class FunctionCaller(Protocol):
-    """Anything that can force a model to answer through one function; the extractor depends on this only."""
+    """Anything that gets a model to answer through one function call; the extractor depends on this only."""
 
     @property
     def model(self) -> str: ...
@@ -108,7 +108,7 @@ class BedrockResponsesClient:
         guard: BudgetGuard,
         reasoning_effort: str | None = "low",
         forced_tool_choice: bool = False,
-        timeout_s: float = 120.0,
+        timeout_s: float = 240.0,
         max_concurrency: int = 4,
         retry_wait_s: float = 2.0,
     ) -> None:
@@ -134,6 +134,7 @@ class BedrockResponsesClient:
             retries=3,
             retry_wait_s=retry_wait_s,
             max_retry_wait_s=20.0,
+            retry_timeouts=False,  # a prompt that was too slow once is as slow again, and may be billed each time
         )
 
     async def call_function(
@@ -195,7 +196,7 @@ def _total_tokens(usage: LlmUsage) -> float:
 def _function_arguments(
     payload: dict[str, object], tool_name: str, call: ProviderCall, usage: LlmUsage
 ) -> dict[str, object]:
-    """Find the forced function call among the output items (reasoning items may come first) and decode it."""
+    """Find the function call among the output items (reasoning items may come first) and decode it."""
     output = payload.get("output")
     for item in cast(list[object], output) if isinstance(output, list) else []:
         fields = _as_dict(item)

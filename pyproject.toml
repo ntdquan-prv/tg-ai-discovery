@@ -1,7 +1,7 @@
 [project]
 name = "tg-discovery"
 version = "0.1.0"
-description = "Finds new LGBTQ+ venues and events for TravelGay admins to review."
+description = "Finds new venues and LGBTQ+ events for TravelGay admins to review."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
@@ -44,12 +44,12 @@ dev = [
 line-length = 120
 target-version = "py312"
 src = [".", "src"]
-extend-exclude = ["*.md"]  # ruff 0.16 would also reformat Python code blocks inside Markdown, including the guide
+extend-exclude = ["*.md"]  # ruff 0.16 would also reformat Python code blocks inside Markdown
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "N", "UP", "B", "A", "C4", "SIM", "PT", "RUF", "S", "ASYNC", "PERF", "D"]
 ignore = [
-    "A005",  # src/tg_discovery/logging.py mirrors the guide's repo layout; imports are absolute
+    "A005",  # src/tg_discovery/logging.py shadows the stdlib name on purpose; imports are absolute
     "D1",    # docstring presence is a judgment call; Google style is enforced wherever one is written
 ]
 
@@ -58,10 +58,9 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106", "D"]
-"evals/**" = ["S311"]  # random is used for reproducible shuffling, not for security
 
 [tool.pyright]
-include = ["src", "evals", "tests"]
+include = ["src", "tests"]
 exclude = ["**/__pycache__", ".venv"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"

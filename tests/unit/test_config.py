@@ -30,21 +30,21 @@ def test_database_url_is_required() -> None:
 
 def test_secrets_do_not_leak_into_repr(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:hunter2@localhost/db")
-    monkeypatch.setenv("BRAVE_API_KEY", "brave-key")
+    monkeypatch.setenv("SERPAPI_API_KEY", "serp-key")
 
     settings = load_settings()
 
     assert "hunter2" not in repr(settings)
-    assert "brave-key" not in repr(settings)
+    assert "serp-key" not in repr(settings)
 
 
 def test_empty_provider_key_means_not_configured(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("BRAVE_API_KEY", "")
+    monkeypatch.setenv("SERPAPI_API_KEY", "")
     monkeypatch.setenv("EXA_API_KEY", "exa-key")
 
     settings = ProviderSettings()
 
-    assert settings.brave_api_key is None
+    assert settings.serpapi_api_key is None
     assert settings.exa_api_key is not None
     assert settings.exa_api_key.get_secret_value() == "exa-key"
 

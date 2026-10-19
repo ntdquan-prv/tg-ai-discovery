@@ -5,7 +5,9 @@ import httpx
 import pytest
 import respx
 
+from tg_discovery.config import ProviderSettings
 from tg_discovery.llm.bedrock_responses import BedrockResponsesClient, FunctionCaller, LlmError, TokenPrice
+from tg_discovery.llm.factory import bedrock_from_settings
 from tg_discovery.pipelines.common.budget import Budget
 from tg_discovery.providers.base import BudgetExceededError, ProviderError
 
@@ -60,6 +62,33 @@ async def _call(client: BedrockResponsesClient) -> object:
     return await client.call_function(
         system="be strict", prompt="extract", tool_name="emit_candidates", parameters=SCHEMA, max_output_tokens=4096
     )
+
+
+@respx.mock
+async def test_a_timed_out_model_call_is_not_sent_again(http: httpx.AsyncClient) -> None:
+    route = respx.post(f"{BASE_URL}/responses").mock(side_effect=httpx.ReadTimeout("no answer"))
+
+    with pytest.raises(ProviderError) as caught:
+        await _call(_client(http, Budget(1.0)))
+
+    assert route.call_count == 1
+    assert caught.value.call.status == "timeout"
+
+
+@respx.mock
+async def test_the_extraction_timeout_comes_from_the_settings(http: httpx.AsyncClient) -> None:
+    settings = ProviderSettings(
+        _env_file=None,  # pyright: ignore[reportCallIssue]
+        aws_bedrock_api_token="t",  # pyright: ignore[reportArgumentType]
+        aws_bedrock_openai_url=BASE_URL,
+        extractor_timeout_s=300,
+    )
+    route = respx.post(f"{BASE_URL}/responses").mock(return_value=httpx.Response(200, json=_response()))
+
+    await _call(bedrock_from_settings(settings, http, Budget(1.0)))
+
+    assert route.calls.last.request.extensions["timeout"]["read"] == 300.0
+    assert ProviderSettings(_env_file=None).extractor_timeout_s == 240.0  # pyright: ignore[reportCallIssue]
 
 
 @respx.mock

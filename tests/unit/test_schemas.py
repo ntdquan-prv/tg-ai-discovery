@@ -9,14 +9,13 @@ from tg_discovery.llm.schemas import (
     ExtractedEvent,
     ExtractedLgbtq,
     ExtractedVenue,
-    LocalQueries,
     VenueExtraction,
     tool_schema,
 )
 
 
-@pytest.mark.parametrize("model", [VenueExtraction, EventExtraction, LocalQueries])
-def test_tool_schemas_are_self_contained(model: type[VenueExtraction | EventExtraction | LocalQueries]) -> None:
+@pytest.mark.parametrize("model", [VenueExtraction, EventExtraction])
+def test_tool_schemas_are_self_contained(model: type[VenueExtraction | EventExtraction]) -> None:
     schema = tool_schema(model)
     text = json.dumps(schema)
 

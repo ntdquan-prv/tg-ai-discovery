@@ -224,6 +224,9 @@ def merge_event(entries: Sequence[EventEntry]) -> EventDraft:
             "occurrences": _occurrences(drafts),
             "venue": _event_venue(drafts),
             "organizer": _first(draft.organizer for draft in drafts),
+            "organizer_url": _first(draft.organizer_url for draft in drafts),
+            "organizer_email": _first(draft.organizer_email for draft in drafts),
+            "organizer_phone": _first(draft.organizer_phone for draft in drafts),
             "audience": audience or Audience.UNKNOWN,
             "links": EventLinks(
                 official=_first(draft.links.official for draft in drafts),

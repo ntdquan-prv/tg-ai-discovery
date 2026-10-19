@@ -10,10 +10,16 @@ import structlog
 from structlog.typing import EventDict, Processor, WrappedLogger
 
 REDACTED = "***"
-_SENSITIVE_KEY_PARTS = ("password", "passwd", "secret", "token", "api_key", "apikey", "authorization", "credential")
-# A credential written inside a text: ``api_key=abc`` in a URL, ``token: abc``, ``Authorization: Bearer abc``.
+# A key is sensitive when a word of it is one of these or it ends with one (``accessToken``); ``input_tokens`` is not.
+_SENSITIVE_WORDS = frozenset(
+    {"password", "passwd", "secret", "token", "apikey", "authorization", "credential", "credentials"}
+)
+_SENSITIVE_ENDINGS = ("password", "passwd", "secret", "token", "apikey", "credential", "credentials")
+# A credential written inside a text: ``api_key=abc`` in a URL, ``token: abc``, ``"api_key": "abc"``. A plain word after
+# "token" ("token limit") is not one.
 _SECRET_IN_TEXT = re.compile(
-    r"(?i)((?:api[_-]?key|token|secret|password|passwd|authorization|credential)[\"'=:\s]+)(?!bearer\b)([^\s&\"',;]+)"
+    r"(?i)((?:api[_-]?key|token|secret|password|passwd|authorization|credential)[\"']?\s*[=:]\s*[\"']?)"
+    r"(?!bearer\b)([^\s&\"',;]+)"
 )
 _BEARER_IN_TEXT = re.compile(r"(?i)(bearer\s+)[^\s\"',;]+")
 # Libraries that log every request line with its full URL, which is where a key in the query string would end up.
@@ -21,8 +27,9 @@ _CHATTY_LOGGERS = ("httpx", "httpcore")
 
 
 def _is_sensitive(key: str) -> bool:
-    lowered = key.lower()
-    return any(part in lowered for part in _SENSITIVE_KEY_PARTS)
+    lowered = key.lower().replace("api_key", "apikey").replace("api-key", "apikey")
+    words = re.split(r"[^a-z0-9]+", lowered)
+    return any(word in _SENSITIVE_WORDS for word in words) or lowered.endswith(_SENSITIVE_ENDINGS)
 
 
 def mask_text(text: str) -> str:
@@ -75,5 +82,5 @@ def configure_logging(level: str = "INFO", *, json_logs: bool = False) -> None:
     root = logging.getLogger()
     root.handlers[:] = [handler]
     root.setLevel(level)
-    for name in _CHATTY_LOGGERS:  # their request lines print the whole URL, and the run's own log lines say it better
+    for name in _CHATTY_LOGGERS:
         logging.getLogger(name).setLevel(logging.DEBUG if level == "DEBUG" else logging.WARNING)

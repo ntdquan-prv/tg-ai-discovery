@@ -1,4 +1,4 @@
-"""TG Discovery: finds new LGBTQ+ venues and events for TravelGay admins to review."""
+"""TG Discovery: finds new venues and LGBTQ+ events for TravelGay admins to review."""
 
 from importlib.metadata import PackageNotFoundError, version
 

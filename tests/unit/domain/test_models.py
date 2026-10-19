@@ -130,7 +130,7 @@ def test_scrub_google_derived_keeps_facts_and_drops_the_rest() -> None:
     assert scrubbed.lgbtq.evidence == []
     assert venue.phone is not None  # the original is untouched
 
-    kept = scrub_google_derived(venue, keep_details=True)  # the owner's KEEP_GOOGLE_DETAILS switch
+    kept = scrub_google_derived(venue, keep_details=True)  # KEEP_GOOGLE_DETAILS on
 
     assert (kept.phone, kept.opening_hours, kept.description, kept.price_text) == (
         "+66 2 123 4567",
@@ -149,6 +149,9 @@ def test_scrub_google_derived_event() -> None:
         description="Fun.",
         price_text="THB 500",
         organizer="Someone",
+        organizer_url="https://someone.example",
+        organizer_email="info@someone.example",
+        organizer_phone="+66 2 000 0000",
         images=[EventImage(url="https://encrypted-tbn0.gstatic.example/p.jpg")],
     )
 
@@ -161,6 +164,7 @@ def test_scrub_google_derived_event() -> None:
         None,
     )
     assert scrubbed.images == []
+    assert (scrubbed.organizer_url, scrubbed.organizer_email, scrubbed.organizer_phone) == (None, None, None)
     assert len(event.images) == 1  # the original is untouched
 
     kept = scrub_google_derived(event, keep_details=True)

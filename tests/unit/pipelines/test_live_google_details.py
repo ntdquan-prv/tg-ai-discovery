@@ -1,4 +1,4 @@
-"""The live collector scrubs Google-derived drafts, and keeps their details only when the owner's switch says so."""
+"""The live collector scrubs Google-derived drafts, and keeps their details only with KEEP_GOOGLE_DETAILS on."""
 
 from typing import cast
 
@@ -61,7 +61,7 @@ async def test_google_details_are_dropped_by_default() -> None:
     assert all(draft.name == "Bar Example" and draft.address == "Soi 4" for draft in venues)
 
 
-async def test_the_owners_switch_keeps_the_google_details_but_not_the_socials() -> None:
+async def test_keep_google_details_keeps_the_details_but_not_the_socials() -> None:
     venues = await _venues(FakePlaces("serpapi_maps", google_derived=True), keep_google_details=True)
 
     assert all(_details(draft) == _details(PLACE) for draft in venues)

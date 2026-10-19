@@ -96,7 +96,7 @@ def candidate_router(flow: Flow) -> APIRouter:
             if run is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "no such run")
             position = _position(await repository.run_candidate_ids(session, run_id, flow), candidate_id)
-        return review_packet(row, flow, run=run, position=position, now=datetime.now(UTC))
+        return review_packet(row, flow, run=run, position=position)
 
     async def decide(
         session: AsyncSession,

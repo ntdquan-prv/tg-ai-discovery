@@ -105,7 +105,7 @@ class RunFilter(BaseModel):
             "cities": sorted(city.name.casefold() for city in self.cities),
             "window_days": self.window_days if flow is Flow.EVENT else None,
         }
-        if flow is Flow.VENUE:  # added only for venues, so earlier requests keep their identity
+        if flow is Flow.VENUE:  # a venue-only key, so event digests are unchanged
             key["venue_types"] = [venue_type.value for venue_type in self.chosen_venue_types()]
         return hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()
 

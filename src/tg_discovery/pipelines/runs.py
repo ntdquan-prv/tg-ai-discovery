@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tg_discovery.domain.enums import Flow
 from tg_discovery.domain.geo import BoundingBox
+from tg_discovery.pipelines.common.budget import Budget
 from tg_discovery.pipelines.discovery import (
     AreaError,
     CityRequest,
@@ -53,14 +54,16 @@ async def execute_run(
     began = time.perf_counter()
     wanted = RunFilter.model_validate(run.filter)
     log.info("run started", run=run.code, flow=run.flow, country=wanted.country, cities=[c.name for c in wanted.cities])
-    status, stats, error, cost = "failed", {}, None, 0.0
+    status, stats, error = "failed", {}, None
+    budget: Budget | None = None
     try:
         async with open_environment() as environment:
+            budget = environment.budget
             status, stats, error = await _discover(environment, session_factory, run, clock)
-            cost = environment.budget.spent_usd
     except Exception as exc:  # the run is the unit of failure: record it and stay alive
         log.exception("run failed", run=run.code)
         status, error = "failed", f"{type(exc).__name__}: {exc}"[:MAX_ERROR_CHARS]
+    cost = budget.spent_usd if budget is not None else 0.0  # what was spent counts even when the run failed
     async with session_factory() as session:
         await repository.finish_run(
             session, run_id, status=status, stats=stats, cost_usd=cost, error=error, now=clock()

@@ -30,6 +30,9 @@ services:
 
   api:
     build: .
+    env_file:
+      - path: .env # provider keys and settings; the values below win
+        required: false
     environment:
       APP_ENV: dev
       DATABASE_URL: postgresql://tg_discovery:tg_discovery@db:5432/tg_discovery

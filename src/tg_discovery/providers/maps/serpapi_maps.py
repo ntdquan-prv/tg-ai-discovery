@@ -5,13 +5,13 @@ centred on the box with the box's height in metres, and returns up to 20 places 
 through them in steps of 20 with about 100 as the practical ceiling; this adapter does not page: one call is one page.
 
 Everything here is Google-derived, so the runner scrubs the drafts: the phone, opening hours, description and price
-read here are dropped unless the owner turned on ``KEEP_GOOGLE_DETAILS``. Ratings, review counts, photos and thumbnails
+read here are dropped unless ``KEEP_GOOGLE_DETAILS`` is on. Ratings, review counts, photos and thumbnails
 are never read. A place keeps its ``place_id`` and ``data_id``, and its source is the Google Maps address built from the
 ``place_id``, which is the only page that is certain to exist. Field names follow serpapi.com/maps-local-results and
 /maps-place-results (read on 2026-10-13): ``operating_hours`` is an object by day in ``local_results``, while a single
 ``place_results`` gives ``hours`` as a list of one-day objects (``hours`` in ``local_results`` is only the current
-state, "Open, closes 2 AM"). Google gives no LGBTQ+ signal beyond the place category
-(a "Gay bar" is one), so any other place still goes through the verify step. Terms and price: see ``providers.serpapi``.
+state, "Open, closes 2 AM"). Google gives no LGBTQ+ signal beyond the place category (a "Gay bar" is one), so the
+level of any other place is left to the reviewer. Terms and price: see ``providers.serpapi``.
 """
 
 import re

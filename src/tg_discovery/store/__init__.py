@@ -1,1 +1,1 @@
-"""Persistence: engine, session factory and (from M2 onwards) tables and repositories."""
+"""Persistence: engine, session factory, ORM tables and the repository."""

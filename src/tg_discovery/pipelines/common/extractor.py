@@ -1,7 +1,7 @@
 """The shared extractor: turns the text a provider returned into venue or event drafts.
 
-One model call per batch of search hits. The model sees the pages as delimited data and answers through a forced
-function. Every record it returns is then checked in code: it must cite pages that were in the input, and a quote that
+One model call per batch of search hits. The model sees the pages as delimited data and answers through one function
+call. Every record it returns is then checked in code: it must cite pages that were in the input, and a quote that
 cannot be found in the page it cites is dropped. Nothing the model writes can set provenance, timestamps or the city's
 country and time zone; those come from the context.
 """
@@ -15,9 +15,11 @@ from functools import cache
 from importlib.resources import files
 from typing import Protocol, cast
 
+import structlog
 from pydantic import BaseModel, ValidationError
 from rapidfuzz import fuzz
 
+from tg_discovery.domain.contacts import clean_email, email_in_text, is_role_email, phone_digits, phone_in_text
 from tg_discovery.domain.enums import Flow
 from tg_discovery.domain.models import (
     EventDraft,
@@ -44,6 +46,8 @@ from tg_discovery.llm.schemas import (
     tool_schema,
 )
 from tg_discovery.providers.base import PageImage, SearchHit
+
+log = structlog.get_logger()
 
 TOOL_NAME = "emit_candidates"
 DEFAULT_MAX_CHARS_PER_HIT = 6_000
@@ -72,6 +76,7 @@ class ExtractionStats(BaseModel):
     items_invalid: int = 0
     items_ungrounded: int = 0  # cited no page that was in the input
     quotes_dropped: int = 0  # quotes that could not be found in the page they cite
+    contacts_dropped: int = 0  # organiser contacts not on the cited pages, or a person's rather than an organisation's
 
 
 class Extraction(BaseModel):
@@ -139,7 +144,7 @@ def _parse_time(value: str | None) -> time | None:
 
 
 class Extractor:
-    """Extracts venue or event drafts from search hits with one forced-function model call per batch."""
+    """Extracts venue or event drafts from search hits with one function-call model request per batch."""
 
     def __init__(
         self,
@@ -149,12 +154,14 @@ class Extractor:
         max_chars_per_hit: int = DEFAULT_MAX_CHARS_PER_HIT,
         max_total_chars: int = DEFAULT_MAX_TOTAL_CHARS,
         nonce: Callable[[], str] = _random_nonce,
+        log_page_chars: int = 0,
     ) -> None:
         self._llm = llm
         self._max_output_tokens = max_output_tokens
         self._max_chars_per_hit = max_chars_per_hit
         self._max_total_chars = max_total_chars
         self._nonce = nonce
+        self._log_page_chars = log_page_chars  # 0: page text is never logged (see Settings.log_page_text_chars)
 
     @property
     def model(self) -> str:
@@ -164,6 +171,8 @@ class Extractor:
         """Extract drafts from ``hits``. Raises ``LlmError`` or ``ProviderError`` when the model call fails."""
         pages, dropped = self._pages(hits)
         stats = ExtractionStats(pages_sent=len(pages), pages_dropped=dropped)
+        if self._log_page_chars:
+            self._log_pages(pages, dropped, ctx)
         if not pages:
             return Extraction(stats=stats)
         result = await self._llm.call_function(
@@ -192,6 +201,24 @@ class Extractor:
             published = hit.published_at.date() if hit.published_at else None
             pages.append(_Page(url=hit.url, title=hit.title, text=text, published=published, images=_page_images(hit)))
         return pages, dropped
+
+    def _log_pages(self, pages: Sequence[_Page], dropped: int, ctx: ExtractionContext) -> None:
+        """Log what the model is about to read: each page's address, length and the start of its text."""
+        for number, page in enumerate(pages, start=1):
+            log.info(
+                "page sent to the model",
+                provider=ctx.provider,
+                flow=ctx.flow.value,
+                city=ctx.city,
+                page=f"{number}/{len(pages)}",
+                url=page.url,
+                title=page.title,
+                published=page.published.isoformat() if page.published else None,
+                chars=len(page.text),
+                text=page.text[: self._log_page_chars],
+            )
+        if dropped:
+            log.info("pages not sent to the model", provider=ctx.provider, city=ctx.city, dropped=dropped)
 
     def _prompt(self, pages: Sequence[_Page], ctx: ExtractionContext) -> str:
         nonce = self._nonce()
@@ -401,6 +428,29 @@ def _occurrence(raw: ExtractedOccurrence, ctx: ExtractionContext) -> EventOccurr
     )
 
 
+def _organizer_contacts(
+    item: ExtractedEvent, sources: Sequence[SourceRef], pages: Sequence[_Page], stats: ExtractionStats
+) -> tuple[str | None, str | None, str | None]:
+    """The organiser's website, email and phone that may be kept (never a private person's details).
+
+    An email must be a shared mailbox and a phone number needs an organiser with its own web presence; both must be
+    written on one of the pages the record cites, so that nothing the model made up or guessed is kept.
+    """
+    cited = " ".join(page.text for source in sources if (page := _find_page(source.url, pages)) is not None)
+    website = clean_url(item.organizer_website) if item.organizer_website else None
+    email = clean_email(item.organizer_email)
+    if email is not None and not (is_role_email(email) and email_in_text(email, cited)):
+        email = None
+    phone = item.organizer_phone
+    digits = phone_digits(phone)
+    if digits is None or website is None or not phone_in_text(digits, cited):
+        phone = None
+    stats.contacts_dropped += sum(
+        (bool(item.organizer_email) and email is None, bool(item.organizer_phone) and not phone)
+    )
+    return website, email, phone
+
+
 def _event_draft(
     item: ExtractedEvent,
     sources: list[SourceRef],
@@ -409,6 +459,7 @@ def _event_draft(
     stats: ExtractionStats,
 ) -> EventDraft | None:
     occurrences = [occurrence for raw in item.occurrences if (occurrence := _occurrence(raw, ctx)) is not None]
+    organizer_url, organizer_email, organizer_phone = _organizer_contacts(item, sources, pages, stats)
     try:
         return EventDraft(
             name=item.name,
@@ -419,6 +470,9 @@ def _event_draft(
                 name=item.venue_name, address=item.venue_address, city=item.venue_city, country=ctx.country
             ),
             organizer=item.organizer,
+            organizer_url=organizer_url,
+            organizer_email=organizer_email,
+            organizer_phone=organizer_phone,
             audience=item.audience,
             links=EventLinks(
                 official=clean_url(item.official_url) if item.official_url else None,

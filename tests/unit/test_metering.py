@@ -49,6 +49,58 @@ async def make_http(budget: Budget) -> AsyncIterator[MakeHttp]:
         yield make
 
 
+async def test_a_slow_answer_gets_the_providers_own_timeout_not_the_shared_clients(budget: Budget) -> None:
+    """The model may take minutes; the shared client's short default must not cut it (a real socket, no mock)."""
+
+    async def answer_late(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.read(65536)
+        await asyncio.sleep(0.5)
+        writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: application/json\r\n\r\n{}")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(answer_late, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(0.1)) as client:
+            http = MeteredHttp("llm:slow", PRICE, client, budget, timeout_s=5.0, retries=0)
+            response, call = await http.request("POST", f"http://127.0.0.1:{port}/responses", endpoint="responses")
+    finally:
+        server.close()
+
+    assert (response.status_code, call.status, call.attempts) == (200, "ok", 1)
+
+
+@respx.mock
+async def test_each_request_carries_the_providers_timeout(make_http: MakeHttp) -> None:
+    route = respx.get(URL).mock(return_value=httpx.Response(200))
+
+    await make_http(timeout_s=90.0).request("GET", URL, endpoint="search")
+
+    assert route.calls.last.request.extensions["timeout"]["read"] == 90.0
+
+
+@respx.mock
+async def test_a_timed_out_call_is_sent_again_by_default(make_http: MakeHttp) -> None:
+    route = respx.get(URL).mock(side_effect=[httpx.ReadTimeout("too slow"), httpx.Response(200)])
+
+    _, call = await make_http(retries=1).request("GET", URL, endpoint="search")
+
+    assert (route.call_count, call.status, call.attempts) == (2, "ok", 2)
+
+
+@respx.mock
+async def test_a_timed_out_call_is_not_sent_again_when_the_provider_says_so(budget: Budget) -> None:
+    route = respx.get(URL).mock(side_effect=httpx.ReadTimeout("too slow"))
+    async with httpx.AsyncClient() as client:
+        http = MeteredHttp("llm:x", PRICE, client, budget, retries=3, retry_wait_s=0.0, retry_timeouts=False)
+
+        with pytest.raises(ProviderError) as caught:
+            await http.request("GET", URL, endpoint="responses")
+
+    assert (route.call_count, caught.value.call.status) == (1, "timeout")
+
+
 @respx.mock
 async def test_a_successful_call_is_priced_and_settled(make_http: MakeHttp, budget: Budget) -> None:
     respx.get(URL).mock(return_value=httpx.Response(200, json={"results": []}))
@@ -183,7 +235,7 @@ async def test_the_asyncio_timeout_also_counts_as_a_timeout(make_http: MakeHttp)
 
 
 @respx.mock
-async def test_a_call_that_does_not_fit_the_budget_sends_nothing(budget: Budget) -> None:
+async def test_a_call_that_does_not_fit_the_budget_sends_nothing() -> None:
     route = respx.get(URL).mock(return_value=httpx.Response(200))
     tiny = Budget(0.001)
 
@@ -193,7 +245,7 @@ async def test_a_call_that_does_not_fit_the_budget_sends_nothing(budget: Budget)
             await http.request("GET", URL, endpoint="search")
 
     assert route.call_count == 0
-    assert budget.spent_usd == 0
+    assert (tiny.spent_usd, tiny.reserved_usd) == (0, 0)
 
 
 @respx.mock
@@ -248,6 +300,7 @@ async def test_a_cancelled_call_gives_its_reservation_back(make_http: MakeHttp, 
     respx.get(URL).mock(side_effect=hang)
     task = asyncio.create_task(make_http().request("GET", URL, endpoint="search"))
     await asyncio.sleep(0.01)
+    assert budget.reserved_usd > 0  # the call is in flight and holds its reservation
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):

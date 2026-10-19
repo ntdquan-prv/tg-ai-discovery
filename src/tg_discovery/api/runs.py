@@ -83,7 +83,8 @@ VenueRunBody = Annotated[RunRequest, Body(openapi_examples=_VENUE_EXAMPLES)]
     description=(
         "Searches the chosen cities for upcoming LGBTQ+ events, scores what it finds and queues the uncertain ones for "
         "review. Returns at once; follow the run with `GET /runs/{run_id}`. The same request made again while it runs, "
-        "or within a few hours of finishing, returns that run (`deduplicated: true`) and costs nothing. "
+        "or within `RUN_TTL_EVENT_HOURS` of finishing (3 by default), returns that run (`deduplicated: true`) and "
+        "costs nothing. "
         "`venue_types` is ignored here."
     ),
 )
@@ -100,7 +101,8 @@ async def start_event_run(body: EventRunBody, request: Request, session: Session
         "Dance Club, Saunas, Massage, Gyms, Attractions, Tours; all ten when left out), three searches per type, so "
         "the cost follows the number of types. Venues are not limited to LGBTQ+ places: their LGBTQ+ level is assessed "
         "and shown in the review packet, but it neither scores nor filters them. Venues change slowly, so a finished "
-        "run answers the same request (same cities and types) for a week. `window_days` is ignored here."
+        "run answers the same request (same cities and types) for `RUN_TTL_VENUE_HOURS` (a week by default). "
+        "`window_days` is ignored here."
     ),
 )
 async def start_venue_run(body: VenueRunBody, request: Request, session: SessionDep, admin: Runner) -> RunAccepted:

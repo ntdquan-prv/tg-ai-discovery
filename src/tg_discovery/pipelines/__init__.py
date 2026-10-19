@@ -1,1 +1,1 @@
-"""Discovery pipelines. M1 only holds the pieces the bake-off shares with them (``common``)."""
+"""Discovery pipelines: one run of the event or venue flow, and the pieces both flows share (``common``)."""

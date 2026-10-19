@@ -36,11 +36,21 @@ def test_credential_keys_are_masked_at_any_depth() -> None:
         ("token=t-1&password=hunter2", "token=***&password=***"),
         ('{"api_key": "abc"}', '{"api_key": "***"}'),
         ("nothing to hide at https://example.org/a?b=c", "nothing to hide at https://example.org/a?b=c"),
+        ("the token limit was reached", "the token limit was reached"),
         ("", ""),
     ],
 )
 def test_credentials_written_inside_a_text_are_masked(text: str, expected: str) -> None:
     assert mask_text(text) == expected
+
+
+def test_token_counts_and_similar_keys_are_not_masked() -> None:
+    event = {"input_tokens": 1200, "max_output_tokens": 8192, "accessToken": "t", "api-key": "k", "client_secret": "s"}
+
+    redacted = redact_secrets(None, "info", event)
+
+    assert (redacted["input_tokens"], redacted["max_output_tokens"]) == (1200, 8192)
+    assert redacted["accessToken"] == redacted["api-key"] == redacted["client_secret"] == REDACTED
 
 
 def test_a_log_line_from_another_library_is_masked_too(capsys: pytest.CaptureFixture[str]) -> None:

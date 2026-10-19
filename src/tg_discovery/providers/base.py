@@ -1,4 +1,4 @@
-"""Contracts between the bake-off harness (and later the pipelines) and the provider adapters.
+"""Contracts between the discovery pipelines and the provider adapters.
 
 An adapter makes one vendor call per ``search`` or ``find_venues`` and reports what the call cost. It never retries on
 its own, never writes anything to disk and never keeps a raw payload: shared HTTP behaviour lives in ``metering``.
@@ -42,7 +42,7 @@ class PriceSpec:
 
     unit: str  # what is billed: "request", "credit", "page"...
     usd_per_unit: float
-    verified_on: date | None  # None: taken from the guide or a secondary source, not read on the vendor's own page
+    verified_on: date | None  # None: taken from a secondary source, not read on the vendor's own page
     source_url: str
     notes: str = ""
 
@@ -54,7 +54,7 @@ CallStatus = Literal["ok", "error", "timeout"]
 
 
 class ProviderCall(BaseModel):
-    """What one provider call cost and how it went; the harness logs one of these per call."""
+    """What one provider call cost and how it went; every adapter result carries one."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -168,7 +168,7 @@ class VenueProvider(Protocol):
 
     @property
     def queryless(self) -> bool:
-        """Whether the provider ignores ``VenueQuery.text``; the harness then calls it once per city."""
+        """Whether the provider ignores ``VenueQuery.text``; the pipeline then calls it once per city."""
         ...
 
     @property

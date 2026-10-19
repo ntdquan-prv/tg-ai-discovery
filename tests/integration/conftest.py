@@ -40,6 +40,8 @@ async def _create_database_if_missing(url: str) -> None:
 def database_url() -> str:
     url = os.environ.get("TEST_DATABASE_URL", DEFAULT_URL)
     parsed = make_url(url)
+    if not (parsed.database or "").endswith("_test"):  # the tests truncate every table of this database
+        pytest.fail(f"TEST_DATABASE_URL must name a database ending in _test, not {parsed.database!r}")
     try:
         socket.create_connection((parsed.host or "localhost", parsed.port or 5432), timeout=1).close()
     except OSError:

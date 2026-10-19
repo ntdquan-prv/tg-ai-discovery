@@ -1,4 +1,4 @@
-"""Identity rules for venues and events. Pure functions; the production dedupe (M2) uses the same rules.
+"""Identity rules for venues and events. Pure functions, used by the merge within a run and by the stored fingerprint.
 
 A venue is identified by the strongest key it has, in this order: Google ``place_id``, OSM element, Foursquare id,
 the registrable domain of its own website, and finally its normalised name plus a geohash. Every key is paired with a

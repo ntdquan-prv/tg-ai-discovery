@@ -1,6 +1,6 @@
 """ORM tables: discovery runs, the venue and event candidates they find, and the review and publishing trail.
 
-Venues and events have separate candidate tables (guide section 9). A candidate holds the merged draft as ``payload``
+Venues and events have separate candidate tables. A candidate holds the merged draft as ``payload``
 (derived facts, URLs and quotes of at most 300 characters; never a raw provider response) plus the columns the lists and
 filters need. ``version`` guards a review against two admins deciding on the same candidate.
 """

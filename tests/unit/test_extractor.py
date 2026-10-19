@@ -1,6 +1,7 @@
 from datetime import UTC, date, datetime, time
 
 import pytest
+from structlog.testing import capture_logs
 
 from tests.support import NOW, FakeLlm
 from tg_discovery.domain.enums import EventType, Flow, LgbtqLevel, OperatingStatus
@@ -189,6 +190,79 @@ async def test_events_get_valid_occurrences_and_the_citys_time_zone() -> None:
     assert (second.start_date, second.end_date, second.timezone) == (date(2026, 11, 21), None, None)
     assert "Time zone of the city: Asia/Bangkok" in str(llm.calls[0]["prompt"])
     assert "extract LGBTQ+ events" in str(llm.calls[0]["system"])
+
+
+ORGANISER_PAGE = "https://club.example/events/endgame"
+
+
+def _organiser_event(**contacts: object) -> dict[str, object]:
+    return {**_event("EndGame", ORGANISER_PAGE), "organizer": "GenderFunk", **contacts}
+
+
+async def _organiser(**contacts: object) -> tuple[object, int]:
+    page = SearchHit(
+        url=ORGANISER_PAGE,
+        content="EndGame by GenderFunk. Bookings: Booking@GenderFunk.vn or +84 28 3823 4567. Producer: jane@gmail.com",
+    )
+    extraction = await _extractor(FakeLlm({"events": [_organiser_event(**contacts)]})).extract([page], _ctx(Flow.EVENT))
+    (event,) = extraction.events
+    contact = (event.organizer, event.organizer_url, event.organizer_email, event.organizer_phone)
+    return contact, extraction.stats.contacts_dropped
+
+
+async def test_an_organisations_contacts_written_on_the_page_are_kept() -> None:
+    contact, dropped = await _organiser(
+        organizer_website="https://www.facebook.com/genderfunk?utm_source=x",
+        organizer_email="booking@genderfunk.vn",
+        organizer_phone="+84 28 3823 4567",
+    )
+
+    assert contact == ("GenderFunk", "https://www.facebook.com/genderfunk", "booking@genderfunk.vn", "+84 28 3823 4567")
+    assert dropped == 0
+
+
+@pytest.mark.parametrize(
+    ("contacts", "kept"),
+    [
+        # A person's own address, even one written on the page, is never kept.
+        ({"organizer_email": "jane@gmail.com"}, (None, None, None)),
+        # A shared mailbox the page does not show was guessed by the model.
+        ({"organizer_email": "info@genderfunk.vn"}, (None, None, None)),
+        # A number without a website or social page of the organiser may be a person's own.
+        ({"organizer_phone": "+84 28 3823 4567"}, (None, None, None)),
+        # A number the page does not show.
+        (
+            {"organizer_website": "https://genderfunk.example", "organizer_phone": "+84 90 000 0000"},
+            ("https://genderfunk.example", None, None),
+        ),
+    ],
+)
+async def test_contacts_that_are_a_persons_or_not_on_the_page_are_dropped(
+    contacts: dict[str, object], kept: tuple[str | None, str | None, str | None]
+) -> None:
+    contact, dropped = await _organiser(**contacts)
+
+    assert contact == ("GenderFunk", *kept)
+    assert dropped == 1
+
+
+async def test_page_text_is_logged_only_when_asked_and_only_its_start() -> None:
+    with capture_logs() as quiet:
+        await _extractor(FakeLlm(VENUE_ARGUMENTS)).extract(HITS, _ctx())
+    assert not [entry for entry in quiet if entry["event"] == "page sent to the model"]
+
+    with capture_logs() as logs:
+        await Extractor(FakeLlm(VENUE_ARGUMENTS), nonce=lambda: "n", log_page_chars=20).extract(HITS, _ctx())
+
+    pages = [entry for entry in logs if entry["event"] == "page sent to the model"]
+    assert [entry["page"] for entry in pages] == ["1/2", "2/2"]
+    first = pages[0]
+    assert (first["provider"], first["flow"], first["city"]) == ("exa", "venue", "Bangkok")
+    assert first["url"] == GUIDE
+    assert first["text"] == "Heaven Bar is a gay "  # the first 20 characters only
+    assert first["chars"] == len(" ".join(HITS[0].content.split()))
+    assert first["published"] == "2026-09-30"
+    assert [entry["dropped"] for entry in logs if entry["event"] == "pages not sent to the model"] == [1]
 
 
 def _event(name: str, *urls: str) -> dict[str, object]:

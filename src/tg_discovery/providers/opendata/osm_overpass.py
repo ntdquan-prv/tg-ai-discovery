@@ -1,10 +1,9 @@
 """OpenStreetMap venues from the public Overpass API: every object in an area that is tagged ``lgbtq=*``.
 
-Venue runs are not limited to LGBTQ+ places (the owner's call on 2026-10-13), but this source stays on the ``lgbtq``
-tag: without it a city's query would return every bar, cafe and restaurant mapped there (tens of thousands in a large
-city) in no useful order, while Google Maps and Exa already answer the general queries with the best-known places.
+This source stays on the ``lgbtq`` tag although venue runs are not limited to LGBTQ+ places: without it a large city
+returns tens of thousands of unranked bars and cafes, which Google Maps and Exa already cover better.
 
-The query ignores ``VenueQuery.text`` (the harness calls it once per city), covers nodes, ways and relations, has no
+The query ignores ``VenueQuery.text`` (the pipeline calls it once per city), covers nodes, ways and relations, has no
 result cap and nothing is deduplicated. Usage policy of the main instance, read on 2026-10-08 (OSM wiki, "Overpass
 API"): under 10,000 queries and 1 GB a day is fair use, regular jobs should divide that by 100, requests must carry a
 ``User-Agent`` that identifies the app, "No parallel running of multiple scripts." and "Commercial use should use

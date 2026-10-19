@@ -14,11 +14,6 @@ dist/
 !.env.sample
 .claude/settings.local.json
 
-# Bake-off inputs and outputs: admin-supplied data and provider-derived results never go into git
-results/
-golden/
-canaries/
-
 # Dumps and local databases
 *.sql
 *.dump

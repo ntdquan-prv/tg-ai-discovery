@@ -1,10 +1,8 @@
 """SerpApi Google Search, read for its events pack: the events Google shows above the results of an events query.
 
-SerpApi's Google Events API (``engine=google_events``) no longer accepts requests (its changelog for 2026-08-24 to
-08-30: "deprecated and no longer accepts new requests", seen live as HTTP 400 "Unsupported `google_events` search
-engine" on 2026-10-08), after Google dropped its separate Events tab; DataForSEO retired its Google Events endpoint on
-2026-09-15.
-The guide, written on 2026-10-07, still lists both. What is left is the ``events_results`` list that
+SerpApi's Google Events API (``engine=google_events``) was retired after Google dropped its separate Events tab
+(changelog 2026-08-24 to 08-30; HTTP 400 "Unsupported `google_events` search engine", checked 2026-10-08), and
+DataForSEO retired its Google Events endpoint on 2026-09-15. What is left is the ``events_results`` list that
 ``GET /search?engine=google`` returns when Google shows an events pack: up to ten events, each with a ``title``, a
 ``type``, a ``date`` ("Oct 10", no year), a ``time`` and an ``address`` (venue, area). There is no link, price or
 description, and no date filter, so the period lives in the query text.

@@ -1,8 +1,8 @@
 """Draft models: what a provider or the extractor believes about one venue or one event.
 
 Drafts hold derived facts only. They never carry raw provider payloads, and for data that comes from Google nothing but
-facts and a ``place_id``: ``scrub_google_derived`` removes the rest before a draft is stored (the owner's
-``KEEP_GOOGLE_DETAILS`` switch keeps the phone, hours, description and price as well).
+facts and a ``place_id``: ``scrub_google_derived`` removes the rest before a draft is stored (``KEEP_GOOGLE_DETAILS``
+also keeps the phone, hours, description and price).
 """
 
 from collections.abc import Iterable
@@ -199,6 +199,10 @@ class EventDraft(_Described):
     occurrences: list[EventOccurrence] = Field(default_factory=list[EventOccurrence])
     venue: EventVenue = Field(default_factory=EventVenue)
     organizer: str | None = None
+    # The organiser's own contacts, only an organisation's (see ``domain.contacts``): never a private person's.
+    organizer_url: str | None = None
+    organizer_email: str | None = None
+    organizer_phone: str | None = None
     audience: Audience = Audience.UNKNOWN
     links: EventLinks = Field(default_factory=EventLinks)
     price_text: str | None = None
@@ -252,7 +256,7 @@ def scrub_google_derived(draft: VenueDraft | EventDraft, *, keep_details: bool =
 
     Hours, phone numbers, descriptions, prices, pictures and evidence quotes can all originate in Google reviews or
     listings, so they are dropped; the LGBTQ+ level and the operating status stay because they are derived facts.
-    ``keep_details`` (the owner's ``KEEP_GOOGLE_DETAILS`` switch) keeps the phone, hours, description and price too.
+    ``keep_details`` (``KEEP_GOOGLE_DETAILS``) also keeps the phone, hours, description and price.
     """
     details: dict[str, object] = {}
     if isinstance(draft, VenueDraft):
@@ -261,4 +265,5 @@ def scrub_google_derived(draft: VenueDraft | EventDraft, *, keep_details: bool =
         return draft.model_copy(update={**details, "socials": {}, "lgbtq": _without_quotes(draft.lgbtq)})
     if not keep_details:
         details = {"description": None, "price_text": None}
-    return draft.model_copy(update={**details, "organizer": None, "images": [], "lgbtq": _without_quotes(draft.lgbtq)})
+    organizer = {"organizer": None, "organizer_url": None, "organizer_email": None, "organizer_phone": None}
+    return draft.model_copy(update={**details, **organizer, "images": [], "lgbtq": _without_quotes(draft.lgbtq)})

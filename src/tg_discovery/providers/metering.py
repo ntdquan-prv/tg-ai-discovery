@@ -1,9 +1,11 @@
 """Shared HTTP plumbing for provider adapters.
 
 ``MeteredHttp`` wraps an ``httpx.AsyncClient`` for one provider. Every call reserves its worst-case cost in the budget
-first, runs under a timeout plus a concurrency and rate limit, is retried at most once on transport errors, 429 and
-5xx, and comes back with a ``ProviderCall`` holding the real cost and latency. A failed call raises ``ProviderError``
-with the same record, so cost and latency are logged for failures too.
+first, runs under the provider's own timeout (sent with each request, so the shared client's default never cuts it
+shorter) plus a concurrency and rate limit, is retried (once by default) on transport errors, 429 and 5xx (and on
+timeouts, unless the provider turns that off), and comes back with a ``ProviderCall``
+holding the real cost and latency. A failed call raises ``ProviderError`` with the same record, so cost and latency are
+logged for failures too.
 
 Billing assumptions: a response is billed at the endpoint price unless the adapter reads the real amount from it;
 errors are not billed; a timeout is charged at the estimate because the vendor may still have processed (and billed)
@@ -61,12 +63,14 @@ class MeteredHttp:
         retries: int = 1,
         retry_wait_s: float = 1.0,
         max_retry_wait_s: float | None = None,
+        retry_timeouts: bool = True,
     ) -> None:
         self.provider = provider
         self.price = price
         self._client = client
         self._guard = guard
         self._timeout_s = timeout_s
+        self._retry_timeouts = retry_timeouts
         self._slots = asyncio.Semaphore(max_concurrency)
         self._min_interval_s = min_interval_s
         self._interval_lock = asyncio.Lock()
@@ -91,9 +95,14 @@ class MeteredHttp:
         estimated_cost_usd: float | None = None,
     ) -> tuple[httpx.Response, ProviderCall]:
         """Send one HTTP request through ``call``."""
+        # The shared client's default timeout (30 s) would otherwise cut a provider that is allowed longer, such as the
+        # model (minutes) or SerpApi (90 s), and the error would name the wrong limit.
+        timeout = httpx.Timeout(self._timeout_s)
         return await self.call(
             endpoint,
-            lambda: self._client.request(method, url, headers=headers, params=params, json=json, data=data),
+            lambda: self._client.request(
+                method, url, headers=headers, params=params, json=json, data=data, timeout=timeout
+            ),
             estimated_units=estimated_units,
             units_from=units_from,
             cost_from=cost_from,
@@ -185,7 +194,9 @@ class MeteredHttp:
             async with asyncio.timeout(self._timeout_s):
                 response = await send()
         except (TimeoutError, httpx.TimeoutException) as error:
-            raise _SendError(f"timed out after {self._timeout_s:g}s", retryable=True, timed_out=True) from error
+            raise _SendError(
+                f"timed out after {self._timeout_s:g}s", retryable=self._retry_timeouts, timed_out=True
+            ) from error
         except httpx.TransportError as error:
             raise _SendError(f"{type(error).__name__}: {error}", retryable=True) from error
         latency_ms = round((time.perf_counter() - sent) * 1000)

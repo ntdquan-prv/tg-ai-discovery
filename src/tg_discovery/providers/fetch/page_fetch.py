@@ -1,10 +1,10 @@
 """Downloading a web page over HTTP, connected to the address that passed the SSRF check.
 
-Every URL, including each redirect target, is resolved first and refused unless every address it resolves to is public.
-The request then goes to that address (the host name travels in the ``Host`` header and the TLS server name, so
-certificates are still checked against the real name), which closes the DNS-rebinding gap of ``httpx_fetch``: a second
-DNS answer can no longer send the connection somewhere else. Redirects are followed by hand and capped, the body is read
-only up to ``max_bytes``, and only text is read at all.
+Every URL, including each redirect target, is resolved first and refused unless every address it resolves to is public
+(``ssrf_guard``). The request then goes to that address (the host name travels in the ``Host`` header and the TLS server
+name, so certificates are still checked against the real name), so a second DNS answer cannot send the connection
+somewhere else (DNS rebinding). Redirects are followed by hand and capped, the body is read only up to ``max_bytes``,
+and only text is read at all.
 """
 
 import asyncio
@@ -14,7 +14,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 import httpx
 from pydantic import BaseModel
 
-from tg_discovery.providers.fetch.httpx_fetch import (
+from tg_discovery.providers.fetch.ssrf_guard import (
     Resolver,
     UnresolvableHostError,
     UnsafeUrlError,
@@ -81,8 +81,10 @@ class HttpxPageFetcher:
         for _ in range(self._max_redirects + 1):
             try:
                 addresses = await public_addresses(current, self._resolver)
+                # IPv4 first: the sorted list puts IPv6 ahead of it, and many hosts have no IPv6 route.
+                address = next((item for item in addresses if ":" not in item), addresses[0])
                 async with asyncio.timeout(self._timeout_s):
-                    outcome = await self._get(current, addresses[0])
+                    outcome = await self._get(current, address)
             except (UnsafeUrlError, UnresolvableHostError, TimeoutError, httpx.HTTPError):
                 return None
             if isinstance(outcome, str):

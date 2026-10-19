@@ -61,9 +61,12 @@ class Page[T](BaseModel):
 
 
 class Contact(BaseModel):
+    """An organisation's own contacts as a source publishes them; never a private person's details."""
+
     name: str | None = None
     phone: str | None = None
-    email: str | None = None
+    email: str | None = Field(default=None, description="Events: a shared mailbox (info@, booking@...) only.")
+    url: str | None = Field(default=None, description="Events: the organiser's website or social media page.")
 
 
 class CandidateRow(BaseModel):

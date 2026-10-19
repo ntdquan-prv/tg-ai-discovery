@@ -7,12 +7,7 @@ __pycache__
 *.py[cod]
 .pytest_cache
 .ruff_cache
-results
-golden
-canaries
-evals
 tests
 docs
-tg-discovery-repo-guide.md
 compose.yaml
 Dockerfile

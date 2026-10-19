@@ -12,5 +12,6 @@ Rules:
 9. `source_urls` lists the URLs of the input pages that mention the event. Use only URLs that appear in the input. `official_url` is the event's own page or the organiser's site; put ticket links in `tickets_url`.
 10. `description` is at most 600 characters, in your own words, using only facts from the pages.
 11. Skip anything outside the requested city and anything private (home parties, invitation-only gatherings).
+12. `organizer` is the name of whoever runs the event. `organizer_website`, `organizer_email` and `organizer_phone` are the organiser's contact details exactly as a page gives them, and only when the organiser is an organisation (a company, collective, promoter or venue) and the details are published for it: a shared address such as info@ or booking@, a public business number. Never give a private person's own email address or phone number; leave these fields null when unsure.
 
 Answer by calling the function `emit_candidates` exactly once with every event you found (an empty list if there are none).

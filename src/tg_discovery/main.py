@@ -20,7 +20,7 @@ from tg_discovery.store.db import create_engine, create_session_factory
 
 API_PREFIX = "/api/v1"
 DESCRIPTION = """
-Finds new LGBTQ+ **venues** and **events** in the cities an admin picks, scores them, drops the junk and queues the
+Finds new **venues** and LGBTQ+ **events** in the cities an admin picks, scores them, drops the junk and queues the
 uncertain ones for review. Nothing is published and nothing is written to TravelGay: approving a candidate only
 queues it in an outbox.
 

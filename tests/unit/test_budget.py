@@ -22,7 +22,7 @@ def test_a_call_that_does_not_fit_is_refused() -> None:
     budget.reserve("exa", 0.008)
 
     with pytest.raises(BudgetExceededError, match="does not fit"):
-        budget.reserve("tavily", 0.005)
+        budget.reserve("serpapi_maps", 0.005)
 
 
 def test_a_call_that_exactly_fits_is_allowed() -> None:
@@ -34,10 +34,10 @@ def test_a_call_that_exactly_fits_is_allowed() -> None:
 def test_concurrent_reservations_count_against_each_other() -> None:
     budget = Budget(0.02)
     budget.reserve("exa", 0.01)
-    budget.reserve("brave", 0.01)
+    budget.reserve("osm_overpass", 0.01)
 
     with pytest.raises(BudgetExceededError):
-        budget.reserve("tavily", 0.001)
+        budget.reserve("serpapi_maps", 0.001)
 
 
 def test_release_gives_the_reservation_back() -> None:
@@ -54,9 +54,9 @@ def test_spend_is_tracked_per_provider() -> None:
     budget = Budget(1.0)
     budget.settle(budget.reserve("exa", 0.1), 0.05)
     budget.settle(budget.reserve("exa", 0.1), 0.05)
-    budget.settle(budget.reserve("brave", 0.1), 0.02)
+    budget.settle(budget.reserve("osm_overpass", 0.1), 0.02)
 
-    assert budget.spent_by_provider() == pytest.approx({"exa": 0.10, "brave": 0.02})
+    assert budget.spent_by_provider() == pytest.approx({"exa": 0.10, "osm_overpass": 0.02})
 
 
 @pytest.mark.parametrize("limit", [0, -1])

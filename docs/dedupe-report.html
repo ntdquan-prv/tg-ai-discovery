@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tg-discovery Deduplication</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --surface: #ffffff; --ink: #1d1d1f; --muted: #5f6368; --line: #dcdcd8; --code: #f0f0ec;
+    --accent: #5b4fc4; --accent-soft: #efedfb; --warn: #9a5b00; --warn-soft: #fff4e0; --ok: #2e7d32; --ok-soft: #e8f5e9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141416; --surface: #1d1d20; --ink: #ececec; --muted: #a3a3a8; --line: #333338; --code: #2a2a2e;
+      --accent: #a79cf5; --accent-soft: #29254a; --warn: #f2b45a; --warn-soft: #3a2c14; --ok: #7fcf84; --ok-soft: #1c3320;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141416; --surface: #1d1d20; --ink: #ececec; --muted: #a3a3a8; --line: #333338; --code: #2a2a2e;
+    --accent: #a79cf5; --accent-soft: #29254a; --warn: #f2b45a; --warn-soft: #3a2c14; --ok: #7fcf84; --ok-soft: #1c3320;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1040px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  h2 { font-size: 20px; margin: 40px 0 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+  h3 { font-size: 16px; margin: 22px 0 8px; }
+  p { margin: 8px 0; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  code { font-family: ui-monospace, Consolas, monospace; font-size: 13px; background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code); padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px;
+    font-family: ui-monospace, Consolas, monospace; line-height: 1.45; }
+  nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 0; }
+  nav a { color: var(--ink); text-decoration: none; border: 1px solid var(--line); background: var(--surface);
+    padding: 4px 10px; border-radius: 999px; font-size: 13px; }
+  .tw { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; margin: 10px 0; }
+  table { width: 100%; border-collapse: collapse; background: var(--surface); font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12.5px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+  tr:last-child td { border-bottom: 0; }
+  .note { background: var(--warn-soft); border-left: 4px solid var(--warn); padding: 10px 14px; border-radius: 8px; margin: 12px 0; }
+  .good { background: var(--ok-soft); border-left: 4px solid var(--ok); padding: 10px 14px; border-radius: 8px; margin: 12px 0; }
+  ul, ol { padding-left: 22px; margin: 6px 0; } li { margin: 4px 0; }
+  footer { color: var(--muted); font-size: 13px; margin-top: 40px; border-top: 1px solid var(--line); padding-top: 12px; }
+</style>
+</head>
+<body>
+<main>
+<h1>How tg-discovery recognises duplicates</h1>
+<p class="sub">How the service decides that something it finds is a venue or event it already knows, so that it is not
+reported as a new discovery. Describes the code as of 2026-10-18; the rules live in
+<code>domain/fingerprint.py</code>, <code>pipelines/common/merge.py</code> and <code>store/repository.py</code>.</p>
+<nav>
+  <a href="#summary">Summary</a>
+  <a href="#levels">1. Four levels</a>
+  <a href="#identity">2. Identity rules</a>
+  <a href="#within">3. Within a run</a>
+  <a href="#across">4. Across runs</a>
+  <a href="#reviewer">5. What the reviewer sees</a>
+  <a href="#gaps">6. Known gaps</a>
+  <a href="#improve">7. Improvements</a>
+  <a href="#evaluate">8. Measuring quality</a>
+</nav>
+
+<h2 id="summary">Summary</h2>
+<p>Every venue and event gets an <b>identity</b> built from what identifies it in the real world: a Google place id, an
+OpenStreetMap id, its own website, its name and position, or, for an event, its title and venue. Two records with the same
+identity are the same thing. The service applies this at four levels: the request, the providers of one run, the runs
+over time, and (not built yet) TravelGay's own data. A record that matches one already stored is counted as
+<code>changed</code> or <code>unchanged</code>, never as <code>new</code>, and a candidate an admin has already approved or
+rejected is never put back in the review queue.</p>
+<div class="good">What already works: the same request is not searched twice within its TTL; the drafts several providers make
+of one venue or event within a run are merged into one candidate; a candidate found again in a later run with the same
+strongest key is recognised and updated instead of duplicated.</div>
+<div class="note">What does not yet: a later run only recognises a stored candidate by its single strongest key, with no fuzzy
+matching; and nothing is compared with what TravelGay already publishes. Section 6 lists the cases that slip through.</div>
+
+<!-- ============================================================ -->
+<h2 id="levels">1. The four levels</h2>
+<div class="tw"><table>
+  <tr><th>Level</th><th>Question it answers</th><th>How</th><th>Status</th></tr>
+  <tr><td><b>1. Request</b></td><td>Was this exact search just done?</td>
+    <td>A hash of the request (flow, country, cities, <code>window_days</code> for events, venue types for venues). An
+    identical request that is still running, or finished within the TTL (events 3 hours, venues 7 days), returns the earlier
+    run with <code>deduplicated: true</code>; <code>force: true</code> skips the TTL.</td><td>Built</td></tr>
+  <tr><td><b>2. Within a run</b></td><td>Did two providers, or two pages, describe the same place or event?</td>
+    <td>Identity keys and a fuzzy rule group the drafts; each group is merged into one candidate.</td><td>Built</td></tr>
+  <tr><td><b>3. Across runs</b></td><td>Was this candidate found by an earlier run?</td>
+    <td>Each stored candidate has a unique <code>fingerprint</code>; a new draft with the same fingerprint updates the
+    stored one.</td><td>Built, strongest key only</td></tr>
+  <tr><td><b>4. Against TravelGay</b></td><td>Is it already published on TravelGay?</td>
+    <td>Planned "known set": read-only comparison with TravelGay's venues and events. The packet field
+    <code>dedupe.tg_match</code> is reserved for it.</td><td>Not built</td></tr>
+</table></div>
+
+<!-- ============================================================ -->
+<h2 id="identity">2. Identity rules</h2>
+<h3>Name normalisation</h3>
+<p>Before names are compared they are normalised (<code>normalize_name</code>):</p>
+<ul>
+  <li>lower case; accents removed from Latin, Greek and Cyrillic letters (<i>Sài Gòn</i> → <i>sai gon</i>); Thai,
+    Japanese, Korean and Chinese are kept as written;</li>
+  <li><code>&amp;</code> becomes <i>and</i>; punctuation is dropped;</li>
+  <li>generic words that say what a place is rather than which place it is are dropped: <i>the, and, bar, club, pub, cafe,
+    lounge, gay, lesbian, lgbt, queer, nightclub, sauna, spa, restaurant, hotel</i> and a few more. <i>The Heaven Gay
+    Bar</i> and <i>HEAVEN</i> both become <code>heaven</code>.</li>
+</ul>
+<p>Event titles are reduced to a <b>core title</b> (<code>core_title</code>): years, edition and episode numbers are removed,
+so <i>Pride Night 2026</i>, <i>Pride Night Vol. 3</i> and <i>5th Annual Pride Night</i> all become <code>pride night</code>.</p>
+
+<h3>Venue keys, strongest first</h3>
+<div class="tw"><table>
+  <tr><th>#</th><th>Key</th><th>Example</th><th>Comes from</th></tr>
+  <tr><td>1</td><td>Google place id</td><td><code>gpid:ChIJ…</code></td><td>Google Maps (SerpApi)</td></tr>
+  <tr><td>2</td><td>OpenStreetMap element</td><td><code>osm:node/1001</code></td><td>OpenStreetMap</td></tr>
+  <tr><td>3</td><td>Registrable domain of the venue's own website, within the city</td><td><code>VN|ho chi minh city|dom:heavenbar.com</code></td><td>any source with a website</td></tr>
+  <tr><td>4</td><td>Normalised name plus a geohash cell of about 150 m, within the city</td><td><code>…|ng:heaven|w3gv2b8</code></td><td>any source with coordinates</td></tr>
+  <tr><td>5</td><td>Normalised name alone, within the city (only when nothing else exists)</td><td><code>…|n:heaven</code></td><td>pages that name a venue without a position</td></tr>
+</table></div>
+<p>Keys 3 to 5 carry the country and city, so same-name venues in different cities never merge. A website only counts when
+it is the venue's own: listings and social networks are not websites.</p>
+
+<h3>Event identity</h3>
+<ul>
+  <li><b>Fingerprint</b> (<code>event_fingerprint</code>): city + core title + venue (its Google place id, otherwise its
+    normalised name, otherwise just the city). <b>The date is not part of it</b>: a weekly party is one candidate with many
+    occurrences, not one per week.</li>
+  <li><b>Fuzzy rule</b> (<code>events_match</code>): two events are the same when their core titles are at least
+    <b>88 %</b> alike (order of words ignored) <b>and</b> either they are at the same venue (same place id, within
+    <b>150 m</b>, or venue names at least <b>85 %</b> alike) or their dates overlap.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="within">3. Within a run: grouping and merging drafts</h2>
+<p>Each provider turns what it found into drafts. For each city, the drafts are grouped with a union-find: if A matches B and
+B matches C, all three are one group.</p>
+<ul>
+  <li><b>Venues</b> (<code>group_venues</code>): two drafts are one venue when <b>any</b> of their keys match. A draft
+    without coordinates also joins drafts with exactly the same normalised name.</li>
+  <li><b>Events</b> (<code>group_events</code>): same fingerprint, or the fuzzy rule between any two drafts.</li>
+</ul>
+<p>Each group becomes one candidate (<code>merge_venue</code>, <code>merge_event</code>): the most complete draft is the
+base and its gaps are filled from the others; nothing is invented. Conflicts are settled by rule:</p>
+<div class="tw"><table>
+  <tr><th>Field</th><th>Rule</th></tr>
+  <tr><td>Most fields (address, phone, website, price, organiser…)</td><td>first value found, most complete draft first</td></tr>
+  <tr><td>Coordinates</td><td>from the first draft that has them</td></tr>
+  <tr><td>Operating status</td><td>permanently closed &gt; temporarily closed &gt; open &gt; unknown</td></tr>
+  <tr><td>LGBTQ+ level</td><td>a quoted "no" wins; otherwise the strongest level (primary &gt; friendly &gt; unclear)</td></tr>
+  <tr><td>External ids, socials</td><td>union of all drafts</td></tr>
+  <tr><td>Sources, quotes, pictures</td><td>union, at most 10 sources, 2 quotes, 20 pictures</td></tr>
+  <tr><td>Event occurrences</td><td>union of the dates</td></tr>
+  <tr><td>Event status and type</td><td>cancelled wins over any other status; pride &gt; venue event &gt; event</td></tr>
+</table></div>
+<p>Example: Google Maps finds <i>Heaven</i> with a place id and its website; Exa finds a guide that names <i>The Heaven Gay
+Bar</i> with the same website. They share the website key, so the reviewer sees one candidate, found by two providers,
+with the place id from Maps and the description from the guide. A candidate found by two or more providers also scores
+higher on source trust and verifiability.</p>
+
+<!-- ============================================================ -->
+<h2 id="across">4. Across runs: is it really new?</h2>
+<p>When a run saves its candidates (<code>save_candidates</code>), each candidate is looked up by its
+<code>fingerprint</code> (its strongest key; a unique column in the candidate tables):</p>
+<pre>fingerprint not stored yet          → insert                    outcome: new
+fingerprint stored, content differs → update the candidate      outcome: changed
+fingerprint stored, content same    → keep it; only fill details
+                                      that were empty (phone,
+                                      hours, organiser contacts,
+                                      pictures)                 outcome: unchanged
+stored candidate already approved
+or rejected                         → never reopened; the
+                                      admin's decision stands</pre>
+<p>"Content" is a hash of the material fields (<code>venue_content_hash</code>, <code>event_content_hash</code>): for a
+venue its name, address, rounded position, website and status; for an event its core title, dates and times, venue and
+official link, and status. A reworded description does not count as a change. Every time a candidate is found, a
+<b>sighting</b> row records the run, the outcome, the providers and the score.</p>
+<p>This is how the service knows that something is not a new discovery: only <code>new</code> means first seen; a
+rejected candidate stays rejected however often it is found again.</p>
+
+<!-- ============================================================ -->
+<h2 id="reviewer">5. What the reviewer sees</h2>
+<div class="tw"><table>
+  <tr><th>Where</th><th>What it says about duplicates</th></tr>
+  <tr><td><code>GET /runs/{id}</code> → <code>stats.candidates</code></td><td>how many candidates the run found were new, changed or unchanged, and how many it dropped</td></tr>
+  <tr><td><code>GET /runs/{id}/results?outcome=new</code></td><td>only the candidates this run saw for the first time</td></tr>
+  <tr><td>Review packet → <code>history</code></td><td><code>first_seen_at</code>, <code>last_seen_at</code>, <code>seen_count</code></td></tr>
+  <tr><td>Review packet → <code>found_by</code>, <code>sources</code></td><td>which providers and pages were merged into the candidate</td></tr>
+  <tr><td>Review packet → <code>dedupe</code></td><td><code>tg_match</code> (already on TravelGay) and <code>similar</code> (other candidates that look alike): reserved, empty for now</td></tr>
+  <tr><td>Reject reason <code>duplicate</code></td><td>lets the admin mark a duplicate the rules missed</td></tr>
+</table></div>
+
+<!-- ============================================================ -->
+<h2 id="gaps">6. Known gaps: how a duplicate can still get through</h2>
+<ol>
+  <li><b>Across runs only the strongest key is compared.</b> Within a run any shared key merges two drafts, but the stored
+    fingerprint is a single key. If <i>Heaven</i> was stored with its Google place id and a later run finds it only through
+    Exa, the new draft's strongest key is its website, so it is stored as a second candidate.</li>
+  <li><b>No fuzzy matching across runs.</b> The event fuzzy rule runs only inside one run. Titles written differently on
+    different days (<i>Oï Oï Oï</i> and <i>O ï O ï O ï</i>), or a venue named with and without its district
+    (<i>Clutch</i> and <i>Clutch, Talat Noi</i>), give different fingerprints and become two candidates when they are found
+    by different runs.</li>
+  <li><b>Venue names are only compared exactly.</b> There is no fuzzy rule for venues: <i>Saigon</i> and <i>Sai Gon</i>, a
+    name in Thai script and its English name, or <i>Heaven</i> and <i>Heaven Bangkok</i> do not match by name; they merge only
+    when an id, a website or a 150 m cell is shared.</li>
+  <li><b>Venues without coordinates</b> merge only with exactly the same normalised name.</li>
+  <li><b>Nothing is compared with TravelGay.</b> A venue or event already published on TravelGay can be proposed as new.</li>
+  <li><b>The event fuzzy rule compares every pair</b> within a city, so it slows down as a run finds more events
+    (about 8 seconds for 750 drafts in a test).</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="improve">7. Improvements, in order</h2>
+<div class="tw"><table>
+  <tr><th>#</th><th>Change</th><th>Fixes gap</th></tr>
+  <tr><td>1</td><td><b>Store every identity key</b> of a candidate in a <code>candidate_keys</code> table and look up a new draft by
+    <b>any</b> of its keys, as the in-run grouping already does.</td><td>1</td></tr>
+  <tr><td>2</td><td><b>Fuzzy check against stored candidates</b> of the same city: for events, the fuzzy rule over candidates whose
+    dates are near; for venues, a name similarity of at least 90 % within 200 m.</td><td>2, 3</td></tr>
+  <tr><td>3</td><td><b>Better normalisation</b>: compare names without spaces and punctuation; drop a trailing district or city after
+    a comma in venue names; transliterate non-Latin scripts for the comparison only.</td><td>2, 3</td></tr>
+  <tr><td>4</td><td><b>Known set</b>: read TravelGay's venues and events (read only) and match them by website, name and position
+    (TravelGay venues and hotels carry coordinates), filling <code>dedupe.tg_match</code>.</td><td>5</td></tr>
+  <tr><td>5</td><td><b>"Possible duplicates" for the reviewer</b>: fill <code>dedupe.similar</code> with near matches below the merge
+    threshold, and add an admin action to merge two candidates.</td><td>all, as a safety net</td></tr>
+  <tr><td>6</td><td><b>Faster event matching</b>: compare only events with the same first title word or within a date window, instead
+    of every pair.</td><td>6</td></tr>
+</table></div>
+
+<!-- ============================================================ -->
+<h2 id="evaluate">8. How to measure dedupe quality</h2>
+<ul>
+  <li><b>Duplicate rate</b>: candidates rejected with reason <code>duplicate</code> divided by all decided candidates, per run and
+    per city. Rising means duplicates are getting through.</li>
+  <li><b>Labelled pairs</b>: sample pairs of candidates of one city that the rules did not merge but that look alike, and pairs they
+    did merge; an admin labels each pair "same" or "different". From these, precision (merged pairs that were really the same)
+    and recall (same pairs that were merged) show whether the thresholds (88 % titles, 85 % venue names, 150 m) should move.</li>
+  <li><b>Regression tests</b>: each duplicate found in review becomes a unit test of the identity rules, so a fix never comes
+    undone.</li>
+</ul>
+
+<footer>tg-discovery · deduplication · 2026-10-18</footer>
+</main>
+</body>
+</html>

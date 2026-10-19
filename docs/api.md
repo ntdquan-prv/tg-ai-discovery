@@ -11,7 +11,7 @@ page says how the pieces fit and which fields are not filled in yet.
    `force: true` to search again.
 2. **Follow**: `GET /api/v1/runs/{run_id}` until `status` is `succeeded`, `partial` (some providers or cities failed, the
    rest is there) or `failed`. `stats` holds the progress, the calls made, what was found and dropped, and the errors.
-   Poll every few seconds; a run takes one to three minutes per city.
+   Poll every few seconds; a city takes about a minute for venues and two to five minutes for events.
 3. **List**: `GET /api/v1/runs/{run_id}/results` gives the rows of the review table, best score first.
    `GET /api/v1/events/candidates?status=needs_review&city=...&q=...` is the same table across runs.
 4. **Review**: `GET /api/v1/events/candidates/{id}?run_id=...` is the review packet; `run_id` adds `position`
@@ -56,13 +56,19 @@ Filled from what the sources state, never guessed: names, dates and times (the y
 `date_inferred` says so), venue, address, links, price text, the LGBTQ+ level with the quotes that support it, and the
 sources. Venues also carry coordinates, type, website, phone and opening hours where a source gave them.
 
-Often empty, so the screens need an empty state: the organiser (events: a name only, and only when a source states it;
-phone and email are not collected), the description (an AI draft from the source), `tickets.kind` (read from the price
-text), `lat`/`lng` of events, a venue's `price_text` (such as `$$`), and for Google-derived data everything except names,
-addresses, coordinates, links and ids. With `KEEP_GOOGLE_DETAILS=true` (the owner's switch for the POC, off by default
-because Google's terms do not allow storing them) Google's phone, opening hours, description and price are kept as well;
-Google Maps gives them for most venues, while Google's events pack has none of them. A later run fills a phone, hours,
-description or price that a candidate waiting for review lacks, without a new `version`; it never replaces a stored one.
+Event organiser (`event.organizer` and the row's `contact`): the name, and the organiser's own `url` (website or social
+page), `email` and `phone` when a source publishes them for an organisation. Personal data of private individuals is
+never kept: an email must be a shared mailbox (`info@`, `booking@`, `events@`...), a phone number is
+kept only for an organiser that has its own website or social page, and both must be written on a page the event was
+found on. Expect them to be empty for most events.
+
+Often empty, so the screens need an empty state: the organiser's contacts (above), the description (an AI draft from
+the source), `tickets.kind` (read from the price text), `lat`/`lng` of events, a venue's `price_text` (such as `$$`), and
+for Google-derived data everything except names, addresses, coordinates, links and ids. With `KEEP_GOOGLE_DETAILS=true`
+(off by default, because Google's terms do not allow storing them) Google's phone, opening hours, description and price
+are kept as well; Google Maps gives them for most venues, while Google's events pack has none of them. A later run fills
+a phone, hours, description or price that a candidate waiting for review lacks, without a new `version`; it never
+replaces a stored one.
 
 Event pictures (`event.images`): the URLs of the pictures of the pages that are about that event alone, up to 20, each
 with the page it came from (`source_url`) and the page's own `alt` text. Two sources feed them: Exa's main picture of the
@@ -91,7 +97,7 @@ events: one that is not is dropped.
 ## Costs and limits
 
 A run reads `BUDGET_USD_PER_RUN` and stops searching before it would spend more (`stats.stopped_by_budget`). Providers
-whose terms need the owner's review (Brave, Parallel, SerpApi) run only when named in `ACCEPTED_TERMS`.
+whose terms must be accepted first (SerpApi) run only when named in `ACCEPTED_TERMS`.
 
 ## How long a run took
 

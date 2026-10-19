@@ -4,8 +4,8 @@ import httpx
 import pytest
 import respx
 
-from tg_discovery.providers.fetch.httpx_fetch import UnresolvableHostError
 from tg_discovery.providers.fetch.page_fetch import PAGE_USER_AGENT, HttpxPageFetcher
+from tg_discovery.providers.fetch.ssrf_guard import UnresolvableHostError
 
 PUBLIC = "93.184.216.34"
 PUBLIC_V6 = "2606:2800:220:1:248:1893:25c8:1946"

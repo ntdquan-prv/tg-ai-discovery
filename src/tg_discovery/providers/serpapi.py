@@ -1,17 +1,18 @@
 """What the SerpApi adapters share: the endpoint, the price, the checks on a reply and a few JSON readers.
 
 SerpApi runs the Google search itself and hands it back as JSON, so everything it sends is Google-derived data: the
-adapters set ``google_derived`` and the runner then keeps only names, addresses, coordinates, URLs and ids (guide
-section 3.5). Both engines are ``GET https://serpapi.com/search`` with the key in the ``api_key`` query parameter.
+adapters set ``google_derived`` and the runner then keeps only names, addresses, coordinates, URLs and ids (Google
+allows storing only its place ids). Both engines are ``GET https://serpapi.com/search`` with the key in the ``api_key``
+query parameter.
 
 Billing (https://serpapi.com/pricing, read 2026-10-08): plans, not pay-as-you-go. "Only successful searches are counted
 toward your monthly searches. Cached, errored, and failed searches are not." A free plan gives 250 searches a month, at
 most 50 an hour. Identical searches within an hour are served from SerpApi's cache and are free.
 
-Terms (https://serpapi.com/legal, last updated 2026-08-27, read through a summarising fetch tool, not by counsel): no
-clause on storing results or on benchmarking; clause 2 forbids reselling the Service; clause 13 says SerpApi is liable
-for the lawful collection of public search data "but not for how that data is ultimately used". Google v. SerpApi is
-still running (guide section 3.5), which is why the owner has to accept these adapters before they run.
+Terms (https://serpapi.com/legal, last updated 2026-08-27, read 2026-10-08, not reviewed by counsel): no clause on
+storing results or on benchmarking; clause 2 forbids reselling the Service; clause 13 says SerpApi is liable for the
+lawful collection of public search data "but not for how that data is ultimately used". Google v. SerpApi is pending,
+hence ``requires_acceptance``.
 """
 
 import math
@@ -36,10 +37,10 @@ PRICE = PriceSpec(
         "are not counted."
     ),
 )
-# The free plan allows 50 successful searches an hour, so the adapters stay polite rather than fast.
+# Courtesy spacing only: the free plan's limit of 50 searches an hour is not enforced here.
 MAX_CONCURRENCY = 2
 MIN_INTERVAL_S = 0.5
-# A Google search through SerpApi takes about 14 s at the median and 3 of 12 passed 30 s (seen live on 2026-10-08).
+# Measured 2026-10-08: about 14 s per search at the median, 3 of 12 over 30 s.
 TIMEOUT_S = 90.0
 ERROR_TEXT_CHARS = 200
 
